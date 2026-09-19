@@ -1682,32 +1682,51 @@ git commit -m "feat(ssrf): guarded undici dispatcher"
 
 **Hardening corrections (authoritative — override the code below where they conflict):**
 
-1. `stripToText` must separate block elements (linkedom's `textContent` concatenates without separators — `"AlphaBeta"`). Replace with:
+1. `stripToText` must separate block elements AND must not duplicate content when blocks are nested (a selector matching both containers and descendants repeats text: `<div><p>Alpha</p><p>Beta</p></div>` → `"AlphaBeta\nAlpha\nBeta"`). Walk the DOM and insert a separator around block-level tags instead, and guard empty input:
 ```ts
+const BLOCK_TAGS = new Set([
+  'P', 'DIV', 'LI', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'SECTION', 'ARTICLE',
+  'TR', 'TD', 'TH', 'BLOCKQUOTE', 'PRE', 'UL', 'OL', 'TABLE', 'BR',
+]);
+
+function collectText(node: Node, out: string[]): void {
+  for (const child of Array.from(node.childNodes)) {
+    if (child.nodeType === 3) {
+      out.push(child.textContent ?? '');
+    } else if (child.nodeType === 1) {
+      const element = child as Element;
+      const isBlock = BLOCK_TAGS.has(element.tagName.toUpperCase());
+      if (isBlock) out.push('\n');
+      collectText(element, out);
+      if (isBlock) out.push('\n');
+    }
+  }
+}
+
 export function stripToText(html: string): string {
+  if (html.trim() === '') return '';
   const { document } = parseHTML(html);
-  const blocks = Array.from(
-    document.querySelectorAll('p, div, li, h1, h2, h3, h4, h5, h6, section, article, tr, br'),
-  );
-  const text =
-    blocks.length > 0
-      ? blocks.map((node) => node.textContent ?? '').join('\n')
-      : (document.body?.textContent ?? '');
-  return text.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+  const out: string[] = [];
+  if (document.body) collectText(document.body, out);
+  return out.join('').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
 }
 ```
-Its test must assert separation (output does NOT contain `'AlphaBeta'`; contains `'Alpha'`).
+Tests: flat siblings separate; the nested case `<div><p>Alpha</p><p>Beta</p></div>` does NOT contain `'AlphaBeta'` and each word appears once; `stripToText('')` returns `''`.
 
-2. `truncate` must be a **hard cap** — the returned `content` (including the marker) never exceeds `maxChars`:
+2. `extractArticle` must not throw on empty/whitespace HTML — add `if (html.trim() === '') return {};` at the top. Test `extractArticle('', url)` returns `{}` (linkedom yields a null `documentElement` otherwise and Readability throws).
+
+3. `truncate` must be a **hard cap** for non-negative `maxChars`:
 ```ts
 export function truncate(text: string, maxChars: number): { content: string; truncated: boolean } {
+  const limit = Math.max(0, Math.floor(maxChars));
   const marker = '\n\n[Content truncated]';
-  if (text.length <= maxChars) return { content: text, truncated: false };
-  const budget = Math.max(0, maxChars - marker.length);
-  return { content: `${text.slice(0, budget)}${marker}`, truncated: true };
+  if (text.length <= limit) return { content: text, truncated: false };
+  const budget = Math.max(0, limit - marker.length);
+  const suffix = marker.length <= limit ? marker : '';
+  return { content: `${text.slice(0, budget)}${suffix}`, truncated: true };
 }
 ```
-Test: for `maxChars` smaller than the marker, `content.length <= maxChars`; and for a large string, `content.length <= maxChars`.
+Tests: `content.length <= maxChars` for tiny (e.g. `5`), zero, and large caps; a negative `maxChars` is clamped to `0`.
 
 - [ ] **Step 1: Write the failing tests**
 
