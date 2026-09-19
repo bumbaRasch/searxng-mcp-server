@@ -122,7 +122,7 @@ function origin(url: string): string {
   try {
     return new URL(url).origin;
   } catch {
-    return url;
+    return 'the configured instance';
   }
 }
 
@@ -144,41 +144,52 @@ export async function search(
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), config.searxngTimeoutMs);
-  let response: Awaited<ReturnType<FetchLike>>;
   try {
-    response = await fetchImpl(url, { headers, signal: controller.signal });
-  } catch (error) {
-    throw new SearxngError(
-      `Could not reach SearXNG at ${origin(config.searxngUrl)}. Is the container running and is SEARXNG_URL correct?`,
-      { cause: error },
-    );
+    let response: Awaited<ReturnType<FetchLike>>;
+    try {
+      response = await fetchImpl(url, { headers, signal: controller.signal });
+    } catch (error) {
+      throw new SearxngError(
+        `Could not reach SearXNG at ${origin(config.searxngUrl)}. Is the container running and is SEARXNG_URL correct?`,
+        { cause: error },
+      );
+    }
+
+    if (response.status === 403) {
+      throw new SearxngError(
+        'SearXNG returned 403: the JSON API is disabled. Add "json" to search.formats in settings.yml.',
+      );
+    }
+    if (response.status === 400) {
+      throw new SearxngError(
+        'SearXNG rejected the query parameters (400). Check categories, engines, language, time_range and safesearch.',
+      );
+    }
+    if (!response.ok) {
+      throw new SearxngError(`SearXNG request failed with HTTP ${response.status}.`);
+    }
+
+    let body: string;
+    try {
+      body = await readCapped(response, config.maxResponseBytes);
+    } catch (error) {
+      throw new SearxngError(
+        error instanceof Error ? error.message : 'SearXNG response could not be read.',
+        { cause: error },
+      );
+    }
+
+    let raw: unknown;
+    try {
+      raw = JSON.parse(body);
+    } catch (error) {
+      throw new SearxngError(
+        'SearXNG returned a non-JSON response. Ensure format=json is enabled in settings.yml.',
+        { cause: error },
+      );
+    }
+    return mapSearchResponse(raw, params.maxResults ?? 10);
   } finally {
     clearTimeout(timer);
   }
-
-  if (response.status === 403) {
-    throw new SearxngError(
-      'SearXNG returned 403: the JSON API is disabled. Add "json" to search.formats in settings.yml.',
-    );
-  }
-  if (response.status === 400) {
-    throw new SearxngError(
-      'SearXNG rejected the query parameters (400). Check categories, engines, language, time_range and safesearch.',
-    );
-  }
-  if (!response.ok) {
-    throw new SearxngError(`SearXNG request failed with HTTP ${response.status}.`);
-  }
-
-  const body = await readCapped(response, config.maxResponseBytes);
-  let raw: unknown;
-  try {
-    raw = JSON.parse(body);
-  } catch (error) {
-    throw new SearxngError(
-      'SearXNG returned a non-JSON response. Ensure format=json is enabled in settings.yml.',
-      { cause: error },
-    );
-  }
-  return mapSearchResponse(raw, params.maxResults ?? 10);
 }

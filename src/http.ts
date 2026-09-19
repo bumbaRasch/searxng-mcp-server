@@ -14,7 +14,13 @@ export type FetchLike = (
 
 export async function readCapped(response: HttpResponseLike, limit: number): Promise<string> {
   const reader = response.body?.getReader();
-  if (!reader) return response.text();
+  if (!reader) {
+    const text = await response.text();
+    if (Buffer.byteLength(text, 'utf8') > limit) {
+      throw new Error(`Response exceeds the ${limit} byte limit.`);
+    }
+    return text;
+  }
   const chunks: Uint8Array[] = [];
   let total = 0;
   for (;;) {

@@ -227,4 +227,33 @@ describe('search', () => {
       search({ ...config, maxResponseBytes: 100 }, { query: 'q' }, { fetchImpl }),
     ).rejects.toThrow(/byte limit/i);
   });
+
+  it('reports a non-JSON body', async () => {
+    const fetchImpl = (async () =>
+      new Response('<html>nope</html>', { status: 200 })) as unknown as FetchLike;
+    await expect(search(config, { query: 'q' }, { fetchImpl })).rejects.toThrow(/non-JSON/i);
+  });
+
+  it('aborts a stalled response body via the timeout', async () => {
+    const fetchImpl = ((_url: string, init?: RequestInit) => {
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          init?.signal?.addEventListener('abort', () => {
+            controller.error(new Error('aborted'));
+          });
+        },
+      });
+      return Promise.resolve({
+        status: 200,
+        ok: true,
+        headers: { get: () => null },
+        body: stream,
+        json: async () => ({}),
+        text: async () => '',
+      });
+    }) as unknown as FetchLike;
+    await expect(
+      search({ ...config, searxngTimeoutMs: 10 }, { query: 'q' }, { fetchImpl }),
+    ).rejects.toBeInstanceOf(SearxngError);
+  });
 });
