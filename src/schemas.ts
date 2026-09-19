@@ -139,6 +139,66 @@ export const newsSearchOutput = z.object({
 export type NewsSearchResponse = z.infer<typeof newsSearchOutput>;
 export type NewsSearchResult = z.infer<(typeof newsSearchOutput.shape)['results']['element']>;
 
+export const videoSearchInput = z.object({
+  query: queryArg,
+  engines: enginesArg,
+  language: languageArg,
+  time_range: timeRange.optional().describe('Restrict results by time.'),
+  pageno: pagenoArg,
+  safesearch: safesearchArg,
+  max_results: maxResultsArg,
+});
+export type VideoSearchInput = z.infer<typeof videoSearchInput>;
+
+export const musicSearchInput = z.object({
+  query: queryArg,
+  engines: enginesArg,
+  language: languageArg,
+  pageno: pagenoArg,
+  safesearch: safesearchArg,
+  max_results: maxResultsArg,
+});
+export type MusicSearchInput = z.infer<typeof musicSearchInput>;
+
+export const videoSearchOutput = z.object({
+  query: z.string(),
+  results: z.array(
+    z.object({
+      title: z.string(),
+      url: z.string(),
+      thumbnailSrc: z.string().optional(),
+      length: z.string().optional(),
+      author: z.string().optional(),
+      publishedDate: z.string().optional(),
+      engines: z.array(z.string()).optional(),
+    }),
+  ),
+  suggestions: z.array(z.string()),
+  unresponsiveEngines: z.array(z.tuple([z.string(), z.string()])),
+});
+export type VideoSearchResponse = z.infer<typeof videoSearchOutput>;
+export type VideoSearchResult = z.infer<(typeof videoSearchOutput.shape)['results']['element']>;
+
+export const musicSearchOutput = z.object({
+  query: z.string(),
+  results: z.array(
+    z.object({
+      title: z.string(),
+      url: z.string(),
+      audioSrc: z.string().optional(),
+      thumbnailSrc: z.string().optional(),
+      length: z.string().optional(),
+      author: z.string().optional(),
+      publishedDate: z.string().optional(),
+      engines: z.array(z.string()).optional(),
+    }),
+  ),
+  suggestions: z.array(z.string()),
+  unresponsiveEngines: z.array(z.tuple([z.string(), z.string()])),
+});
+export type MusicSearchResponse = z.infer<typeof musicSearchOutput>;
+export type MusicSearchResult = z.infer<(typeof musicSearchOutput.shape)['results']['element']>;
+
 export const fetchInput = z.object({
   url: z.string().min(1).max(2048).describe('The absolute http/https URL to fetch.'),
   max_chars: z
@@ -218,4 +278,12 @@ export function toImageSearchParams(input: ImageSearchInput): SearchParams {
 
 export function toNewsSearchParams(input: NewsSearchInput): SearchParams {
   return { ...mapCommonParams(input), categories: ['news'], timeRange: input.time_range };
+}
+
+export function toVideoSearchParams(input: VideoSearchInput): SearchParams {
+  return { ...mapCommonParams(input), categories: ['videos'], timeRange: input.time_range };
+}
+
+export function toMusicSearchParams(input: MusicSearchInput): SearchParams {
+  return { ...mapCommonParams(input), categories: ['music'] };
 }

@@ -2,10 +2,16 @@ import { describe, expect, it } from 'vitest';
 import {
   imageSearchInput,
   imageSearchOutput,
+  musicSearchInput,
+  musicSearchOutput,
   newsSearchInput,
   newsSearchOutput,
   toImageSearchParams,
+  toMusicSearchParams,
   toNewsSearchParams,
+  toVideoSearchParams,
+  videoSearchInput,
+  videoSearchOutput,
 } from '../src/schemas.js';
 
 describe('imageSearchInput', () => {
@@ -108,5 +114,82 @@ describe('media output schemas accept their projections', () => {
       unresponsiveEngines: [],
     };
     expect(newsSearchOutput.safeParse(response).success).toBe(true);
+  });
+});
+
+describe('videoSearchInput', () => {
+  it('accepts shared args + time_range and applies the default', () => {
+    const parsed = videoSearchInput.parse({ query: 'fedora review', time_range: 'month' });
+    expect(parsed.max_results).toBe(10);
+    expect(parsed.time_range).toBe('month');
+    expect('time_range' in videoSearchInput.shape).toBe(true);
+  });
+});
+
+describe('musicSearchInput', () => {
+  it('has no time_range field and strips it if sent', () => {
+    expect('time_range' in musicSearchInput.shape).toBe(false);
+    const parsed = musicSearchInput.parse({ query: 'nirvana', time_range: 'day' });
+    expect(parsed).toEqual({ query: 'nirvana', max_results: 10 });
+  });
+});
+
+describe('toVideoSearchParams / toMusicSearchParams', () => {
+  it('fix categories and map fields (video carries time_range)', () => {
+    const video = toVideoSearchParams(
+      videoSearchInput.parse({ query: 'q', time_range: 'week', language: 'de', max_results: 5 }),
+    );
+    expect(video).toEqual({
+      query: 'q',
+      categories: ['videos'],
+      timeRange: 'week',
+      language: 'de',
+      maxResults: 5,
+    });
+    const music = toMusicSearchParams(musicSearchInput.parse({ query: 'q', pageno: 2 }));
+    expect(music).toEqual({
+      query: 'q',
+      categories: ['music'],
+      pageno: 2,
+      maxResults: 10,
+    });
+  });
+});
+
+describe('video/music output schemas validate their projections', () => {
+  it('videoSearchOutput accepts a full result and rejects a missing required field', () => {
+    const ok = {
+      query: 'q',
+      results: [
+        {
+          title: 'T',
+          url: 'https://v.test/1',
+          thumbnailSrc: 'https://t.test/1',
+          length: '14:54',
+          author: 'A',
+          publishedDate: '2025-07-16',
+          engines: ['youtube'],
+        },
+      ],
+      suggestions: [],
+      unresponsiveEngines: [],
+    };
+    expect(videoSearchOutput.safeParse(ok).success).toBe(true);
+    expect(videoSearchOutput.safeParse({ ...ok, results: [{ title: 'x' }] }).success).toBe(false);
+  });
+  it('musicSearchOutput accepts a result without audioSrc (soft mode)', () => {
+    const ok = {
+      query: 'q',
+      results: [{ title: 'Radio', url: 'https://r.test/stream' }],
+      suggestions: [],
+      unresponsiveEngines: [],
+    };
+    expect(musicSearchOutput.safeParse(ok).success).toBe(true);
+    expect(
+      musicSearchOutput.safeParse({
+        ...ok,
+        results: [{ ...ok.results[0], audioSrc: 'https://r.test/file.ogg', length: '3:21' }],
+      }).success,
+    ).toBe(true);
   });
 });
