@@ -129,7 +129,7 @@ export interface FetchOptions {
   lookup?: LookupAll;
 }
 
-const MAX_REDIRECTS = 5;
+export const MAX_REDIRECTS = 5;
 
 export async function fetchContent(
   config: Config,
@@ -161,7 +161,9 @@ export async function fetchContent(
         ...lookupOpts,
       });
       if (initialScheme === 'https:' && url.protocol === 'http:') {
-        throw new Error(`Refusing to downgrade ${initialScheme} to http on redirect.`);
+        throw new Error(
+          `Refusing to downgrade ${initialScheme.replace(':', '')} to http on redirect.`,
+        );
       }
       const response = await fetchImpl(url.toString(), {
         redirect: 'manual',
@@ -172,12 +174,14 @@ export async function fetchContent(
 
       if (response.status >= 300 && response.status < 400) {
         const location = response.headers.get('location');
+        await response.body?.cancel().catch(() => undefined);
         if (!location)
           throw new Error(`Redirect without a Location header from ${url.toString()}.`);
         current = new URL(location, url).toString();
         continue;
       }
       if (!response.ok) {
+        await response.body?.cancel().catch(() => undefined);
         throw new Error(`Failed to fetch ${url.toString()}: HTTP ${response.status}.`);
       }
 

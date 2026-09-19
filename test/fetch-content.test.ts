@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fetchContent } from '../src/fetch.js';
+import { fetchContent, MAX_REDIRECTS } from '../src/fetch.js';
 import type { FetchLike } from '../src/http.js';
 import type { Config } from '../src/config.js';
 
@@ -34,7 +34,7 @@ describe('fetchContent', () => {
     await expect(fetchContent(config, 'https://example.test/start', { fetchImpl })).rejects.toThrow(
       /redirects/i,
     );
-    expect(count).toBeGreaterThan(1);
+    expect(count).toBe(MAX_REDIRECTS + 1);
   });
 
   it('rejects responses larger than the byte cap', async () => {
