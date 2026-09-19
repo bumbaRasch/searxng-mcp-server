@@ -8,14 +8,14 @@ import {
   newsSearch,
   search,
   SearxngError,
-  type ImageSearchResponse,
-  type NewsSearchResponse,
 } from '../src/searxng.js';
 import {
   imageSearchInput,
   imageSearchOutput,
   newsSearchInput,
   newsSearchOutput,
+  type ImageSearchResponse,
+  type NewsSearchResponse,
 } from '../src/schemas.js';
 import { jsonResponse, makeConfig } from './helpers.js';
 import type { FetchLike } from '../src/http.js';
@@ -370,6 +370,29 @@ describe('mapImageResponse', () => {
     const full = mapImageResponse(raw, 10);
     expect(mapImageResponse(raw, 1).results).toHaveLength(1);
     expect(imageSearchOutput.safeParse(full).success).toBe(true);
+  });
+});
+
+describe('engines array caps', () => {
+  const manyEngines = Array.from({ length: 25 }, (_, i) => `engine-${i}`);
+  const base = { query: 'q', suggestions: [], unresponsive_engines: [] };
+
+  it('caps engines at 20 in every projection', () => {
+    const web = mapSearchResponse(
+      { ...base, results: [{ title: 't', url: 'u', content: 'c', engines: manyEngines }] },
+      10,
+    );
+    expect(web.results[0]?.engines).toHaveLength(20);
+    const image = mapImageResponse(
+      { ...base, results: [{ title: 't', url: 'u', img_src: 'i', engines: manyEngines }] },
+      10,
+    );
+    expect(image.results[0]?.engines).toHaveLength(20);
+    const news = mapNewsResponse(
+      { ...base, results: [{ title: 't', url: 'u', content: 'c', engines: manyEngines }] },
+      10,
+    );
+    expect(news.results[0]?.engines).toHaveLength(20);
   });
 });
 

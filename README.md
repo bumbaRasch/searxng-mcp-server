@@ -90,7 +90,7 @@ Generic (`mcpServers`-style clients):
 | `FETCH_TIMEOUT_MS`    | `15000`                    | Timeout for page fetches.                                                                                         |
 | `MAX_CHARS`           | `25000`                    | Maximum characters returned per fetched page (per-call override: `max_chars`).                                    |
 | `MAX_RESPONSE_BYTES`  | `5242880`                  | Maximum download size per fetch (5 MiB).                                                                          |
-| `USER_AGENT`          | `searxng-mcp-ts/<version>` | User-Agent header sent by both tools.                                                                             |
+| `USER_AGENT`          | `searxng-mcp-ts/<version>` | User-Agent header sent by all tools.                                                                              |
 | `ALLOW_PRIVATE_HOSTS` | `false`                    | Set `true`/`1`/`yes`/`on` to permit private-network targets (defeats the SSRF guard — only for trusted networks). |
 
 ## Tools
@@ -141,8 +141,8 @@ node scripts/e2e.mjs  # end-to-end: JSON-RPC handshake + tool calls against the 
 ```
 
 `scripts/e2e.mjs` spawns the built `dist/index.js`, performs the MCP handshake, calls
-`search` and `fetch_content`, and asserts that private-network fetches are rejected by
-the SSRF guard. It requires the Docker stack from step 1 to be running.
+`search`, `fetch_content`, `image_search` and `news_search`, and asserts that
+private-network fetches are rejected by the SSRF guard. It requires the Docker stack from step 1 to be running.
 
 Architecture and security rationale live in [`docs/design.md`](docs/design.md).
 

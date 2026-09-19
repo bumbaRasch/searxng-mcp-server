@@ -148,12 +148,12 @@ export function formatNewsResults(response: NewsSearchResponse): string {
   response.results.forEach((result, index) => {
     body.push('', `## ${index + 1}. ${sanitizeMeta(result.title) || '(untitled)'}`);
     body.push(sanitizeMeta(result.url));
+    if (result.content) body.push('', result.content);
     const meta: string[] = [];
     if (result.publishedDate) meta.push(`published: ${sanitizeMeta(result.publishedDate)}`);
     if (result.engines && result.engines.length > 0)
       meta.push(`engines: ${sanitizeMeta(result.engines.join(', '))}`);
-    if (meta.length > 0) body.push(`_${meta.join(' · ')}_`);
-    if (result.content) body.push('', result.content);
+    if (meta.length > 0) body.push('', `_${meta.join(' · ')}_`);
   });
 
   if (response.suggestions.length > 0) {

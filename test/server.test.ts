@@ -18,7 +18,7 @@ const INIT: JSONRPCMessage = {
     capabilities: {},
     clientInfo: { name: 'test-client', version: '0.0.0' },
   },
-} satisfies JSONRPCMessage;
+};
 const INITIALIZED: JSONRPCMessage = {
   jsonrpc: '2.0',
   method: 'notifications/initialized',

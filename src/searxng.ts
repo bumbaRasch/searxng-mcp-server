@@ -28,8 +28,6 @@ const MAX_SOURCE_CHARS = 200;
 const MAX_MEDIA_FIELD_CHARS = 50;
 const MAX_URL_CHARS = 1000;
 
-export type { ImageSearchResponse, NewsSearchResponse } from './schemas.js';
-
 export class SearxngError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
