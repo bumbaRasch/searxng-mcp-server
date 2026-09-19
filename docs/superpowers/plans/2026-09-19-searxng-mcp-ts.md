@@ -849,7 +849,13 @@ export type FetchLike = (
 
 export async function readCapped(response: HttpResponseLike, limit: number): Promise<string> {
   const reader = response.body?.getReader();
-  if (!reader) return response.text();
+  if (!reader) {
+    const text = await response.text();
+    if (Buffer.byteLength(text, 'utf8') > limit) {
+      throw new Error(`Response exceeds the ${limit} byte limit.`);
+    }
+    return text;
+  }
   const chunks: Uint8Array[] = [];
   let total = 0;
   for (;;) {
@@ -876,7 +882,7 @@ function origin(url: string): string {
   try {
     return new URL(url).origin;
   } catch {
-    return url;
+    return 'the configured instance';
   }
 }
 
@@ -886,19 +892,39 @@ export async function search(
   opts: { fetchImpl?: FetchLike } = {},
 ): Promise<SearchResponse> {
   const fetchImpl = opts.fetchImpl ?? (fetch as unknown as FetchLike);
-  // ... same URL/headers/timeout logic as the brief ...
-  // after the status checks, replace `response.json()` with:
-  const body = await readCapped(response, config.maxResponseBytes);
-  let raw: unknown;
+  // ... same URL/headers/403/400/non-2xx logic as the brief, EXCEPT:
+  //  - hold the AbortController timer until AFTER the body is read (clear it in
+  //    a `finally` wrapping the whole fetch+read) so the timeout also bounds the
+  //    body stream, not just connection/headers;
+  //  - wrap read errors in SearxngError;
+  //  - read the body with readCapped and JSON.parse it.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), config.searxngTimeoutMs);
   try {
-    raw = JSON.parse(body);
-  } catch (error) {
-    throw new SearxngError(
-      'SearXNG returned a non-JSON response. Ensure format=json is enabled in settings.yml.',
-      { cause: error },
-    );
+    // response = await fetchImpl(url, { headers, signal: controller.signal });
+    // ... then the existing status handling ...
+    let body: string;
+    try {
+      body = await readCapped(response, config.maxResponseBytes);
+    } catch (error) {
+      throw new SearxngError(
+        error instanceof Error ? error.message : 'SearXNG response could not be read.',
+        { cause: error },
+      );
+    }
+    let raw: unknown;
+    try {
+      raw = JSON.parse(body);
+    } catch (error) {
+      throw new SearxngError(
+        'SearXNG returned a non-JSON response. Ensure format=json is enabled in settings.yml.',
+        { cause: error },
+      );
+    }
+    return mapSearchResponse(raw, params.maxResults ?? 10);
+  } finally {
+    clearTimeout(timer);
   }
-  return mapSearchResponse(raw, params.maxResults ?? 10);
 }
 ```
 
@@ -911,6 +937,12 @@ export async function search(
     await expect(
       search({ ...config, maxResponseBytes: 100 }, { query: 'q' }, { fetchImpl }),
     ).rejects.toThrow(/byte limit/i);
+  });
+
+  it('reports a non-JSON body', async () => {
+    const fetchImpl = (async () =>
+      new Response('<html>nope</html>', { status: 200 })) as unknown as FetchLike;
+    await expect(search(config, { query: 'q' }, { fetchImpl })).rejects.toThrow(/non-JSON/i);
   });
 ```
 
