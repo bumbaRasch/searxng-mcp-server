@@ -66,9 +66,9 @@ describe('assertRecordsAllowed', () => {
 
 describe('assertUrlAllowed', () => {
   it('rejects non-http(s) and credentialed URLs', async () => {
-    await expect(assertUrlAllowed('file:///etc/passwd', { allowPrivateHosts: false })).rejects.toThrow(
-      /http/i,
-    );
+    await expect(
+      assertUrlAllowed('file:///etc/passwd', { allowPrivateHosts: false }),
+    ).rejects.toThrow(/http/i);
     await expect(
       assertUrlAllowed('http://user:pass@x.test', { allowPrivateHosts: false }),
     ).rejects.toThrow(/credentials/i);
