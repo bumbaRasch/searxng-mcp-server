@@ -159,11 +159,12 @@ function origin(url: string): string {
   }
 }
 
-export async function search(
+/** Shared search cycle: URL + auth + timeout + byte cap + status/JSON errors. */
+async function fetchSearchJson(
   config: Config,
   params: SearchParams,
   opts: { fetchImpl?: FetchLike } = {},
-): Promise<SearchResponse> {
+): Promise<unknown> {
   // No SSRF guard here on purpose: SEARXNG_URL is operator-provided trusted
   // configuration (unlike fetch_content's arbitrary URLs), and the search
   // path never follows redirects to untrusted hosts.
@@ -215,17 +216,24 @@ export async function search(
       );
     }
 
-    let raw: unknown;
     try {
-      raw = JSON.parse(body);
+      return JSON.parse(body);
     } catch (error) {
       throw new SearxngError(
         'SearXNG returned a non-JSON response. Ensure format=json is enabled in settings.yml.',
         { cause: error },
       );
     }
-    return mapSearchResponse(raw, params.maxResults ?? DEFAULT_MAX_RESULTS);
   } finally {
     clearTimeout(timer);
   }
+}
+
+export async function search(
+  config: Config,
+  params: SearchParams,
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<SearchResponse> {
+  const raw = await fetchSearchJson(config, params, opts);
+  return mapSearchResponse(raw, params.maxResults ?? DEFAULT_MAX_RESULTS);
 }
