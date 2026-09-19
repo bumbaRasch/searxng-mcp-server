@@ -1,9 +1,9 @@
 # searxng-mcp-ts
 
 A Model Context Protocol (MCP) server for a self-hosted
-[SearXNG](https://github.com/searxng/searxng) instance. Gives MCP clients four tools —
-`search`, `fetch_content`, `image_search` and `news_search` — with no tracking and no
-API keys for the server itself
+[SearXNG](https://github.com/searxng/searxng) instance. Gives MCP clients six tools —
+`search`, `fetch_content`, `image_search`, `news_search`, `video_search` and
+`music_search` — with no tracking and no API keys for the server itself
 (individual SearXNG engines may need their own keys in `searxng/settings.yml`).
 
 ## Features
@@ -109,6 +109,13 @@ Generic (`mcpServers`-style clients):
 - `news_search(query, time_range?, engines?, language?, safesearch?, pageno?, max_results?)`
   — finds recent news articles with `publishedDate` and a freshness filter
   (`time_range`: `day` | `week` | `month` | `year`).
+- `video_search(query, time_range?, engines?, language?, safesearch?, pageno?, max_results?)`
+  — finds videos: page links, optional preview thumbnails, duration
+  (`length`, normalized from seconds when engines report numbers), author and
+  publish date; `time_range` freshness filter is supported.
+- `music_search(query, engines?, language?, safesearch?, pageno?, max_results?)`
+  — finds music: page links and, when available, direct audio file links
+  (`audioSrc`), duration and author.
 
 All tools annotate their results as untrusted; clients should treat returned content
 as data, never as instructions.

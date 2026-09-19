@@ -105,6 +105,8 @@ async function main() {
     assert(names.includes('fetch_content'), 'tools/list registers "fetch_content"');
     assert(names.includes('image_search'), 'tools/list registers "image_search"');
     assert(names.includes('news_search'), 'tools/list registers "news_search"');
+    assert(names.includes('video_search'), 'tools/list registers "video_search"');
+    assert(names.includes('music_search'), 'tools/list registers "music_search"');
 
     // 3. search against the live SearXNG instance
     const searchCall = await request(serverProcess, 'tools/call', {
@@ -159,6 +161,34 @@ async function main() {
     assert(!newsCall.error && !newsCall.result?.isError, 'news_search call succeeds');
     const newsStructured = newsCall.result?.structuredContent;
     assert(Array.isArray(newsStructured?.results), 'news_search returns a results array');
+
+    // 4c. video_search against the live SearXNG instance
+    const videoCall = await request(serverProcess, 'tools/call', {
+      name: 'video_search',
+      arguments: { query: 'fedora linux', time_range: 'month', max_results: 5 },
+    });
+    assert(!videoCall.error && !videoCall.result?.isError, 'video_search call succeeds');
+    const videoStructured = videoCall.result?.structuredContent;
+    assert(
+      Array.isArray(videoStructured?.results) && videoStructured.results.length > 0,
+      `video_search returns results (got ${videoStructured?.results?.length ?? 0})`,
+    );
+    assert(
+      typeof videoStructured.results[0].url === 'string' &&
+        videoStructured.results[0].url.length > 0,
+      'video_search results carry url',
+    );
+
+    // 4d. music_search against the live SearXNG instance
+    const musicCall = await request(serverProcess, 'tools/call', {
+      name: 'music_search',
+      arguments: { query: 'jazz', max_results: 5 },
+    });
+    assert(!musicCall.error && !musicCall.result?.isError, 'music_search call succeeds');
+    assert(
+      Array.isArray(musicCall.result?.structuredContent?.results),
+      'music_search returns a results array',
+    );
 
     // 5. SSRF guard: private address must be rejected
     const ssrfCall = await request(serverProcess, 'tools/call', {

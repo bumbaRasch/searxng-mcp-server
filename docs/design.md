@@ -29,11 +29,14 @@ SearXNG (docker, 127.0.0.1:8888)   external website
 The server is a thin, stateless adapter. SearXNG aggregates upstream search
 engines; `fetch_content` retrieves and extracts a single page.
 
-Four tools are exposed: `search`, `fetch_content`, `image_search`, and
-`news_search`. The media tools are thin category-specialized wrappers over
-the same SearXNG client (`fetchSearchJson` + dedicated projections); they
-never download images — only URL strings (`thumbnailSrc` is the hook for a
-future base64/ImageContent preview).
+Six tools are exposed: `search`, `fetch_content`, `image_search`,
+`news_search`, `video_search`, and `music_search`. The media tools are thin
+category-specialized wrappers over the same SearXNG client
+(`fetchSearchJson` + dedicated projections); they never download media —
+only URL strings (`thumbnailSrc`/`audioSrc` are hooks for future embedded
+previews). Dates pass through `pickPublishedDate` (SearXNG leaks the string
+`'None'` for missing dates) and durations through `pickLength` (numeric
+seconds are normalized to `M:SS`/`H:MM:SS`).
 
 ## Module layout
 
