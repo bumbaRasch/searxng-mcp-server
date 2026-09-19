@@ -45,4 +45,10 @@ describe('loadConfig', () => {
   it('honors a custom USER_AGENT', () => {
     expect(loadConfig({ USER_AGENT: 'custom/1' }).userAgent).toBe('custom/1');
   });
+
+  it('falls back when URL / USER_AGENT are blank or slash-only', () => {
+    expect(loadConfig({ SEARXNG_URL: '   ' }).searxngUrl).toBe('http://localhost:8888');
+    expect(loadConfig({ SEARXNG_URL: '/' }).searxngUrl).toBe('http://localhost:8888');
+    expect(loadConfig({ USER_AGENT: '' }).userAgent).toBe('searxng-mcp-ts/0.0.0');
+  });
 });

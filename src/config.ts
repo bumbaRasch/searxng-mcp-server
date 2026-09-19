@@ -25,14 +25,24 @@ function boolEnv(env: Env, key: string, fallback: boolean): boolean {
   return ['1', 'true', 'yes', 'on'].includes(raw.trim().toLowerCase());
 }
 
+function strEnv(env: Env, key: string, fallback: string): string {
+  const raw = env[key];
+  return raw === undefined || raw.trim() === '' ? fallback : raw;
+}
+
+function urlEnv(env: Env, key: string, fallback: string): string {
+  const stripped = strEnv(env, key, fallback).replace(/\/+$/, '');
+  return stripped === '' ? fallback : stripped;
+}
+
 export function loadConfig(env: Env, version = '0.0.0'): Config {
   const config: Config = {
-    searxngUrl: (env.SEARXNG_URL ?? 'http://localhost:8888').replace(/\/+$/, ''),
+    searxngUrl: urlEnv(env, 'SEARXNG_URL', 'http://localhost:8888'),
     searxngTimeoutMs: intEnv(env, 'SEARXNG_TIMEOUT_MS', 10_000),
     fetchTimeoutMs: intEnv(env, 'FETCH_TIMEOUT_MS', 15_000),
     maxChars: intEnv(env, 'MAX_CHARS', 25_000),
     maxResponseBytes: intEnv(env, 'MAX_RESPONSE_BYTES', 5_242_880),
-    userAgent: env.USER_AGENT ?? `searxng-mcp-ts/${version}`,
+    userAgent: strEnv(env, 'USER_AGENT', `searxng-mcp-ts/${version}`),
     allowPrivateHosts: boolEnv(env, 'ALLOW_PRIVATE_HOSTS', false),
   };
   if (env.SEARXNG_USERNAME) config.searxngUsername = env.SEARXNG_USERNAME;
