@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildSearchQuery, mapSearchResponse, search, SearxngError } from '../src/searxng.js';
-import type { Config } from '../src/config.js';
+import { jsonResponse, makeConfig } from './helpers.js';
 import type { FetchLike } from '../src/http.js';
 
 describe('buildSearchQuery', () => {
@@ -182,22 +182,7 @@ describe('mapSearchResponse', () => {
   });
 });
 
-const config: Config = {
-  searxngUrl: 'http://searx.test:8888',
-  searxngTimeoutMs: 1000,
-  fetchTimeoutMs: 1000,
-  maxChars: 1000,
-  maxResponseBytes: 1000,
-  userAgent: 'test/1.0',
-  allowPrivateHosts: false,
-};
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
+const config = makeConfig({ maxChars: 1000, maxResponseBytes: 1000, allowPrivateHosts: false });
 
 describe('search', () => {
   it('requests the JSON endpoint and maps results', async () => {
@@ -227,6 +212,31 @@ describe('search', () => {
       { fetchImpl },
     );
     expect(auth).toBe(`Basic ${Buffer.from('u:p').toString('base64')}`);
+  });
+
+  it('sends a username-only basic-auth header', async () => {
+    let auth: string | null = null;
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      auth = new Headers(init?.headers).get('authorization');
+      return jsonResponse({ results: [] });
+    }) as unknown as FetchLike;
+    await search({ ...config, searxngUsername: 'u' }, { query: 'q' }, { fetchImpl });
+    expect(auth).toBe(`Basic ${Buffer.from('u:').toString('base64')}`);
+  });
+
+  it('never leaks credentials from SEARXNG_URL in error messages', async () => {
+    const fetchImpl = (async () => {
+      throw new Error('ECONNREFUSED');
+    }) as unknown as FetchLike;
+    const secretConfig = { ...config, searxngUrl: 'http://user:sekret@searx.test:8888' };
+    await expect(search(secretConfig, { query: 'q' }, { fetchImpl })).rejects.toThrow(
+      /http:\/\/searx\.test:8888/,
+    );
+    try {
+      await search(secretConfig, { query: 'q' }, { fetchImpl });
+    } catch (error) {
+      expect((error as Error).message).not.toContain('sekret');
+    }
   });
 
   it('explains a 403 as a disabled JSON API', async () => {
@@ -284,7 +294,6 @@ describe('search', () => {
         ok: true,
         headers: { get: () => null },
         body: stream,
-        json: async () => ({}),
         text: async () => '',
       });
     }) as unknown as FetchLike;

@@ -11,8 +11,13 @@ export interface Config {
 }
 
 type Env = Record<string, string | undefined>;
+type Warn = (message: string) => void;
 
 const DEFAULT_SEARXNG_URL = 'http://localhost:8888';
+const DEFAULT_SEARXNG_TIMEOUT_MS = 10_000;
+const DEFAULT_FETCH_TIMEOUT_MS = 15_000;
+const DEFAULT_MAX_CHARS = 25_000;
+const DEFAULT_MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
 
 function intEnv(env: Env, key: string, fallback: number): number {
   const raw = env[key];
@@ -32,27 +37,34 @@ function strEnv(env: Env, key: string, fallback: string): string {
   return raw === undefined || raw.trim() === '' ? fallback : raw;
 }
 
-function urlEnv(env: Env, key: string, fallback: string): string {
+function urlEnv(env: Env, key: string, fallback: string, warn: Warn): string {
   const raw = strEnv(env, key, fallback);
-  try {
-    const url = new URL(raw);
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return fallback;
-    url.username = '';
-    url.password = '';
-    const path = url.pathname.replace(/\/+$/, '');
-    return `${url.origin}${path === '/' ? '' : path}` || fallback;
-  } catch {
+  const fail = (reason: string): string => {
+    if (raw !== fallback) warn(`${key}: ignoring "${raw}" (${reason}), using ${fallback}`);
     return fallback;
+  };
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return fail('not a valid URL');
   }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    return fail('only http/https are supported');
+  }
+  url.username = '';
+  url.password = '';
+  const path = url.pathname.replace(/\/+$/, '');
+  return `${url.origin}${path === '/' ? '' : path}`;
 }
 
-export function loadConfig(env: Env, version = '0.0.0'): Config {
+export function loadConfig(env: Env, version: string, warn: Warn = () => {}): Config {
   const config: Config = {
-    searxngUrl: urlEnv(env, 'SEARXNG_URL', DEFAULT_SEARXNG_URL),
-    searxngTimeoutMs: intEnv(env, 'SEARXNG_TIMEOUT_MS', 10_000),
-    fetchTimeoutMs: intEnv(env, 'FETCH_TIMEOUT_MS', 15_000),
-    maxChars: intEnv(env, 'MAX_CHARS', 25_000),
-    maxResponseBytes: intEnv(env, 'MAX_RESPONSE_BYTES', 5_242_880),
+    searxngUrl: urlEnv(env, 'SEARXNG_URL', DEFAULT_SEARXNG_URL, warn),
+    searxngTimeoutMs: intEnv(env, 'SEARXNG_TIMEOUT_MS', DEFAULT_SEARXNG_TIMEOUT_MS),
+    fetchTimeoutMs: intEnv(env, 'FETCH_TIMEOUT_MS', DEFAULT_FETCH_TIMEOUT_MS),
+    maxChars: intEnv(env, 'MAX_CHARS', DEFAULT_MAX_CHARS),
+    maxResponseBytes: intEnv(env, 'MAX_RESPONSE_BYTES', DEFAULT_MAX_RESPONSE_BYTES),
     userAgent: strEnv(env, 'USER_AGENT', `searxng-mcp-ts/${version}`),
     allowPrivateHosts: boolEnv(env, 'ALLOW_PRIVATE_HOSTS', false),
   };

@@ -8,6 +8,10 @@ import {
 } from '../src/ssrf.js';
 
 const rec = (address: string, family = 4): AddressRecord => ({ address, family });
+const failingLookup = async (): Promise<AddressRecord[]> => {
+  throw new Error('NXDOMAIN');
+};
+const emptyLookup = async (): Promise<AddressRecord[]> => [];
 
 describe('isIpBlocked', () => {
   it.each([
@@ -41,6 +45,17 @@ describe('isIpBlocked', () => {
     ['fe80::1%eth0', true],
     ['[fe80::1%eth0]', true],
     ['[fe80::1]%eth0', true],
+    ['192.88.99.1', true],
+    ['192.31.196.1', true],
+    ['192.52.193.1', true],
+    ['192.175.48.1', true],
+    ['2001:0:1234::1', true],
+    ['64:ff9b:1::abcd', true],
+    ['2001:10::1234', true],
+    ['2001:20::1234', true],
+    ['192.88.98.1', false],
+    ['2001:4998::1', false],
+    ['not-an-ip', false],
   ])('classifies %s as blocked=%s', (ip, blocked) => {
     expect(isIpBlocked(ip)).toBe(blocked);
   });
@@ -118,5 +133,17 @@ describe('assertUrlAllowed', () => {
     await expect(
       assertUrlAllowed('http://user:pass@x.test', { allowPrivateHosts: true }),
     ).rejects.toThrow(/credentials/i);
+  });
+
+  it('surfaces DNS resolution failures', async () => {
+    await expect(
+      assertUrlAllowed('https://gone.test', { allowPrivateHosts: false, lookup: failingLookup }),
+    ).rejects.toThrow(/Could not resolve/);
+  });
+
+  it('rejects a hostname that resolves to no records', async () => {
+    await expect(
+      assertUrlAllowed('https://empty.test', { allowPrivateHosts: false, lookup: emptyLookup }),
+    ).rejects.toThrow(/Could not resolve/);
   });
 });

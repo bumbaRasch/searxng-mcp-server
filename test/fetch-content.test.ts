@@ -1,17 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { fetchContent, MAX_REDIRECTS } from '../src/fetch.js';
 import type { FetchLike } from '../src/http.js';
-import type { Config } from '../src/config.js';
+import { makeConfig } from './helpers.js';
 
-const config: Config = {
-  searxngUrl: 'http://localhost:8888',
-  searxngTimeoutMs: 1000,
-  fetchTimeoutMs: 1000,
-  maxChars: 10_000,
-  maxResponseBytes: 100_000,
-  userAgent: 'test/1.0',
-  allowPrivateHosts: true, // skip DNS in unit tests
-};
+const config = makeConfig({ searxngUrl: 'http://localhost:8888' });
 
 const PAGE = `<!doctype html><html><head><title>Doc</title></head><body>
   <article><h1>Doc</h1><p>${'word '.repeat(300)}</p></article></body></html>`;
@@ -81,5 +73,46 @@ describe('fetchContent', () => {
         lookup: async () => [{ address: '10.0.0.1', family: 4 }],
       }),
     ).rejects.toThrow(/private|reserved/i);
+  });
+
+  it('re-validates DNS on every redirect hop', async () => {
+    const lookedUp: string[] = [];
+    const lookup = async (hostname: string) => {
+      lookedUp.push(hostname);
+      return hostname === 'evil.test'
+        ? [{ address: '10.0.0.1', family: 4 }]
+        : [{ address: '93.184.216.34', family: 4 }];
+    };
+    const fetchImpl = (async () =>
+      new Response(null, {
+        status: 302,
+        headers: { location: 'https://evil.test/x' },
+      })) as unknown as FetchLike;
+    await expect(
+      fetchContent({ ...config, allowPrivateHosts: false }, 'https://public.test/start', {
+        fetchImpl,
+        lookup,
+      }),
+    ).rejects.toThrow(/private|reserved/i);
+    expect(lookedUp).toContain('public.test');
+    expect(lookedUp).toContain('evil.test');
+  });
+
+  it('rejects a redirect whose target embeds credentials', async () => {
+    const fetchImpl = (async () =>
+      new Response(null, {
+        status: 302,
+        headers: { location: 'http://u:p@evil.test/x' },
+      })) as unknown as FetchLike;
+    await expect(fetchContent(config, 'https://example.test/a', { fetchImpl })).rejects.toThrow(
+      /credentials/i,
+    );
+  });
+
+  it('rejects a redirect without a Location header', async () => {
+    const fetchImpl = (async () => new Response(null, { status: 302 })) as unknown as FetchLike;
+    await expect(fetchContent(config, 'https://example.test/a', { fetchImpl })).rejects.toThrow(
+      /without a Location/i,
+    );
   });
 });

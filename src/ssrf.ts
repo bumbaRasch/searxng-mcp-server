@@ -18,7 +18,11 @@ const V4_RANGES: ReadonlyArray<readonly [string, number]> = [
   ['172.16.0.0', 12],
   ['192.0.0.0', 24],
   ['192.0.2.0', 24],
+  ['192.31.196.0', 24],
+  ['192.52.193.0', 24],
+  ['192.88.99.0', 24],
   ['192.168.0.0', 16],
+  ['192.175.48.0', 24],
   ['198.18.0.0', 15],
   ['198.51.100.0', 24],
   ['203.0.113.0', 24],
@@ -32,7 +36,11 @@ const V6_RANGES: ReadonlyArray<readonly [string, number]> = [
   ['::ffff:0:0', 96],
   ['::', 96],
   ['64:ff9b::', 96],
+  ['64:ff9b:1::', 48],
   ['100::', 64],
+  ['2001::', 32],
+  ['2001:10::', 28],
+  ['2001:20::', 28],
   ['2001:db8::', 32],
   ['2002::', 16],
   ['fc00::', 7],
@@ -55,7 +63,9 @@ function normalizeIp(ip: string): { address: string; family: number } | null {
 
 // Classifies IP literals only; returns false for non-IP input. Callers must pass
 // validated IP strings (literal checks or resolved AddressRecord values), never raw
-// hostnames.
+// hostnames. The only producers are `isIP()` checks and `dnsLookup`, so garbage
+// input is impossible in production; if it ever occurred, the guarded lookup
+// below still refuses to connect to an unclassifiable host.
 export function isIpBlocked(ip: string): boolean {
   const normalized = normalizeIp(ip);
   if (normalized === null) return false;
@@ -177,5 +187,9 @@ export function createGuardedDispatcher(opts: {
   allowPrivateHosts: boolean;
   lookup?: LookupAll;
 }): Agent {
+  // NOTE: undici replaces `lookup` with an identity lookup when the hostname
+  // is an IP literal, so the dispatcher alone does not guard literals. Every
+  // request through it must also pass `assertUrlAllowed()` first — see
+  // fetchContent(), which does both per redirect hop.
   return new Agent({ connect: { lookup: createGuardedLookup(opts) as never } });
 }

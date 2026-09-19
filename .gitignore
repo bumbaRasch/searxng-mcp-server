@@ -2,5 +2,13 @@ node_modules/
 dist/
 coverage/
 .env
+.env.*
+!.env.example
 *.log
 .superpowers/
+# Local agent tooling (install dev skills from anthropics/skills if needed)
+.agents/
+skills-lock.json
+docs/superpowers/
+.DS_Store
+Thumbs.db

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { extractArticle, stripToText, toMarkdown, truncate } from '../src/fetch.js';
+import { cleanContentHtml, extractArticle, stripToText } from '../src/extract.js';
+import { toMarkdown, truncate } from '../src/markdown.js';
 
 const ARTICLE_HTML = `<!doctype html><html><head><title>My Post</title></head><body>
   <article>
@@ -24,6 +25,50 @@ describe('extractArticle', () => {
 
   it('returns an empty object for an empty string', () => {
     expect(extractArticle('', 'https://x.test')).toEqual({});
+  });
+});
+
+describe('cleanContentHtml', () => {
+  it('absolutizes relative links and image sources against the base URL', () => {
+    const html =
+      '<div><a href="/posts/1">post</a> <a href="page2.html">next</a> <img src="/img/x.png"></div>';
+    const cleaned = cleanContentHtml(html, 'https://blog.test/archives/');
+    expect(cleaned).toContain('href="https://blog.test/posts/1"');
+    expect(cleaned).toContain('href="https://blog.test/archives/page2.html"');
+    expect(cleaned).toContain('src="https://blog.test/img/x.png"');
+  });
+
+  it('keeps already-absolute http(s) URLs and harmless schemes', () => {
+    const html = '<a href="https://abs.test/x">a</a><a href="mailto:hi@example.test">m</a>';
+    const cleaned = cleanContentHtml(html, 'https://base.test/');
+    expect(cleaned).toContain('href="https://abs.test/x"');
+    expect(cleaned).toContain('mailto:hi@example.test');
+  });
+
+  it('removes dangerous href schemes', () => {
+    const cleaned = cleanContentHtml(
+      '<a href="javascript:alert(1)">x</a><a href="data:text/html,evil">y</a>',
+      'https://base.test/',
+    );
+    expect(cleaned).not.toContain('javascript:');
+    expect(cleaned).not.toContain('data:text/html');
+  });
+
+  it('drops script, style, noscript and template elements', () => {
+    const html =
+      '<p>keep</p><script>alert(1)</script><style>p{}</style><noscript>no</noscript><template>t</template>';
+    expect(cleanContentHtml(html, 'https://base.test/')).toBe('<p>keep</p>');
+  });
+
+  it('flows through extractArticle into markdown', () => {
+    const html = `<!doctype html><html><head><title>Linked</title></head><body>
+      <article><h1>Linked</h1>
+        <p>Enough words to make readability extract this article properly, with a
+        <a href="/rel">relative link</a> and an image <img src="pic.png"> inside.</p>
+      </article></body></html>`;
+    const article = extractArticle(html, 'https://blog.test/posts/1');
+    expect(article.contentHtml).toContain('https://blog.test/rel');
+    expect(article.contentHtml).toContain('https://blog.test/posts/pic.png');
   });
 });
 
@@ -63,6 +108,17 @@ describe('stripToText', () => {
 
   it('returns an empty string for empty input', () => {
     expect(stripToText('')).toBe('');
+  });
+
+  it('skips script, style, noscript and template text', () => {
+    const text = stripToText(
+      '<html><body><p>Alpha</p><script>alert(1)</script><style>p{color:red}</style><noscript>nope</noscript><template>tpl</template></body></html>',
+    );
+    expect(text).toContain('Alpha');
+    expect(text).not.toContain('alert(1)');
+    expect(text).not.toContain('color:red');
+    expect(text).not.toContain('nope');
+    expect(text).not.toContain('tpl');
   });
 });
 

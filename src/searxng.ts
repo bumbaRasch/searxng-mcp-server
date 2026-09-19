@@ -1,19 +1,20 @@
 import { URLSearchParams } from 'node:url';
 import type { Config } from './config.js';
 import { readCapped, type FetchLike } from './http.js';
-import type {
-  SearchAnswer,
-  SearchInfobox,
-  SearchParams,
-  SearchResponse,
-  SearchResult,
-} from './types.js';
+import {
+  DEFAULT_MAX_RESULTS,
+  MAX_URLS_PER_INFOBOX,
+  type SearchAnswer,
+  type SearchInfobox,
+  type SearchParams,
+  type SearchResponse,
+  type SearchResult,
+} from './schemas.js';
 
 const MAX_RESULT_CONTENT_CHARS = 1000;
+const MAX_INFOBOX_ID_CHARS = 200;
+const MAX_INFOBOX_URL_CHARS = 500;
 const MAX_ARRAY_ITEMS = 20;
-const MAX_URLS_PER_INFOBOX = 10;
-
-export const DEFAULT_MAX_RESULTS = 10;
 
 export class SearxngError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
@@ -83,7 +84,7 @@ function projectInfobox(value: unknown): SearchInfobox | null {
   if (typeof value.infobox === 'string') {
     out.infobox = truncateText(value.infobox, MAX_RESULT_CONTENT_CHARS);
   }
-  if (typeof value.id === 'string') out.id = truncateText(value.id, 200);
+  if (typeof value.id === 'string') out.id = truncateText(value.id, MAX_INFOBOX_ID_CHARS);
   if (typeof value.content === 'string') {
     out.content = truncateText(value.content, MAX_RESULT_CONTENT_CHARS);
   }
@@ -92,7 +93,7 @@ function projectInfobox(value: unknown): SearchInfobox | null {
     out.urls = value.urls
       .filter((url): url is string => typeof url === 'string')
       .slice(0, MAX_URLS_PER_INFOBOX)
-      .map((url) => truncateText(url, 500));
+      .map((url) => truncateText(url, MAX_INFOBOX_URL_CHARS));
   }
   return Object.keys(out).length > 0 ? out : null;
 }
@@ -163,6 +164,9 @@ export async function search(
   params: SearchParams,
   opts: { fetchImpl?: FetchLike } = {},
 ): Promise<SearchResponse> {
+  // No SSRF guard here on purpose: SEARXNG_URL is operator-provided trusted
+  // configuration (unlike fetch_content's arbitrary URLs), and the search
+  // path never follows redirects to untrusted hosts.
   const fetchImpl: FetchLike = opts.fetchImpl ?? fetch;
   const url = `${config.searxngUrl}/search?${buildSearchQuery(params).toString()}`;
   const headers: Record<string, string> = {

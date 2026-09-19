@@ -10,15 +10,22 @@ import { fileURLToPath } from 'node:url';
 
 const SEARXNG_URL = process.env.SEARXNG_URL ?? 'http://localhost:8888';
 const SERVER = fileURLToPath(new URL('../dist/index.js', import.meta.url));
+// Any 2024+ protocol version works: the server negotiates down to what it
+// supports, and the assertions below do not depend on the negotiated value.
 const PROTOCOL_VERSION = '2024-11-05';
 const REQUEST_TIMEOUT_MS = 60_000;
 
 let nextId = 1;
 const pending = new Map();
 let buffer = '';
+let serverProcess = null;
 
 function fail(message) {
   console.error(`E2E FAIL: ${message}`);
+  if (serverProcess) {
+    serverProcess.stdin?.end();
+    serverProcess.kill('SIGTERM');
+  }
   process.exit(1);
 }
 
@@ -59,46 +66,46 @@ function handleLine(line) {
 }
 
 async function main() {
-  const child = spawn(process.execPath, [SERVER], {
+  serverProcess = spawn(process.execPath, [SERVER], {
     env: { ...process.env, SEARXNG_URL },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
 
-  child.stderr.setEncoding('utf8');
-  child.stderr.on('data', (data) => {
+  serverProcess.stderr.setEncoding('utf8');
+  serverProcess.stderr.on('data', (data) => {
     if (process.env.E2E_VERBOSE) process.stderr.write(`[server] ${data}`);
   });
 
-  child.stdout.setEncoding('utf8');
-  child.stdout.on('data', (data) => {
+  serverProcess.stdout.setEncoding('utf8');
+  serverProcess.stdout.on('data', (data) => {
     buffer += data;
     const lines = buffer.split('\n');
     buffer = lines.pop();
     for (const line of lines) handleLine(line);
   });
 
-  child.on('exit', (code) => {
+  serverProcess.on('exit', (code) => {
     if (pending.size > 0) fail(`server exited early with code ${code}`);
   });
 
   try {
     // 1. Handshake
-    const init = await request(child, 'initialize', {
+    const init = await request(serverProcess, 'initialize', {
       protocolVersion: PROTOCOL_VERSION,
       capabilities: {},
       clientInfo: { name: 'searxng-mcp-ts-e2e', version: '0.0.1' },
     });
     assert(init.result?.serverInfo?.name === 'searxng-mcp-ts', 'initialize returns serverInfo');
-    send(child, { jsonrpc: '2.0', method: 'notifications/initialized' });
+    send(serverProcess, { jsonrpc: '2.0', method: 'notifications/initialized' });
 
     // 2. Tool registration
-    const tools = await request(child, 'tools/list', {});
+    const tools = await request(serverProcess, 'tools/list', {});
     const names = tools.result?.tools?.map((tool) => tool.name) ?? [];
     assert(names.includes('search'), 'tools/list registers "search"');
     assert(names.includes('fetch_content'), 'tools/list registers "fetch_content"');
 
     // 3. search against the live SearXNG instance
-    const searchCall = await request(child, 'tools/call', {
+    const searchCall = await request(serverProcess, 'tools/call', {
       name: 'search',
       arguments: { query: 'searxng' },
     });
@@ -111,7 +118,7 @@ async function main() {
     console.log(`   first result: ${structured.results[0].url}`);
 
     // 4. fetch_content of a public page
-    const exampleCall = await request(child, 'tools/call', {
+    const exampleCall = await request(serverProcess, 'tools/call', {
       name: 'fetch_content',
       arguments: { url: 'https://example.com' },
     });
@@ -126,7 +133,7 @@ async function main() {
     );
 
     // 5. SSRF guard: private address must be rejected
-    const ssrfCall = await request(child, 'tools/call', {
+    const ssrfCall = await request(serverProcess, 'tools/call', {
       name: 'fetch_content',
       arguments: { url: 'http://localhost:8888' },
     });
@@ -140,9 +147,12 @@ async function main() {
       `SSRF rejection mentions private address: ${JSON.stringify(ssrfMessage)}`,
     );
   } finally {
-    child.stdin.end();
-    child.kill('SIGTERM');
-    await Promise.race([once(child, 'exit'), new Promise((resolve) => setTimeout(resolve, 2000))]);
+    serverProcess.stdin.end();
+    serverProcess.kill('SIGTERM');
+    await Promise.race([
+      once(serverProcess, 'exit'),
+      new Promise((resolve) => setTimeout(resolve, 2000)),
+    ]);
   }
 
   console.log('E2E PASS: all checks succeeded');
