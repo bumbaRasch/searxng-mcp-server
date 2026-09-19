@@ -92,6 +92,23 @@ Or as a committed, team-shared `.mcp.json` at a project root:
 Cursor — `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project), same
 shape as Claude's `mcpServers` block above.
 
+ZCode — user scope in `~/.zcode/cli/config.json` (note: `command` is a string,
+and the key is `mcp.servers`):
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "searxng": {
+        "type": "stdio",
+        "command": "node",
+        "args": ["/absolute/path/to/searxng-mcp-ts/dist/index.js"]
+      }
+    }
+  }
+}
+```
+
 Claude Desktop — `claude_desktop_config.json`
 (Linux: `~/.config/Claude/`, macOS: `~/Library/Application Support/Claude/`,
 Windows: `%APPDATA%\Claude\`), then fully restart the app:
