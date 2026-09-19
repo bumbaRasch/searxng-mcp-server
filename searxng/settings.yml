@@ -1,0 +1,9 @@
+use_default_settings: true
+server:
+  limiter: false
+general:
+  instance_name: 'searxng-mcp-ts'
+search:
+  formats:
+    - html
+    - json
