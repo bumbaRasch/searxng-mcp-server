@@ -1467,6 +1467,59 @@ The Task 6 test must also cover the `all: true` branch — production `undici` c
   });
 ```
 
+**Wiring test (integration) — required.** The pure tests do not prove the guard is
+wired into the `Agent` (asserting `instanceof Agent` would pass even if `lookup`
+were dropped). Add a real integration test that routes an `undici` request
+through the dispatcher for a **hostname** (not a literal IP — undici skips the
+`lookup` hook for IP literals) whose injected resolution returns a private
+address:
+```ts
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { fetch as undiciFetch } from 'undici';
+import { createGuardedDispatcher } from '../src/ssrf.js';
+
+async function withServer<T>(run: (port: number) => Promise<T>): Promise<T> {
+  const server = createServer((_req, res) => res.end('ok'));
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as AddressInfo;
+  try {
+    return await run(port);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
+it('blocks a hostname resolving to a private address through the dispatcher', async () => {
+  await withServer(async (port) => {
+    const dispatcher = createGuardedDispatcher({
+      allowPrivateHosts: false,
+      lookup: async () => [{ address: '127.0.0.1', family: 4 }],
+    });
+    try {
+      await expect(undiciFetch(`http://rebind.test:${port}/`, { dispatcher })).rejects.toThrow();
+    } finally {
+      await dispatcher.close();
+    }
+  });
+});
+
+it('allows it when allowPrivateHosts is true', async () => {
+  await withServer(async (port) => {
+    const dispatcher = createGuardedDispatcher({
+      allowPrivateHosts: true,
+      lookup: async () => [{ address: '127.0.0.1', family: 4 }],
+    });
+    try {
+      const response = await undiciFetch(`http://rebind.test:${port}/`, { dispatcher });
+      expect(response.status).toBe(200);
+    } finally {
+      await dispatcher.close();
+    }
+  });
+});
+```
+
 - [ ] **Step 1: Write the failing test**
 
 `test/ssrf-dispatcher.test.ts`:
