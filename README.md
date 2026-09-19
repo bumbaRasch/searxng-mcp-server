@@ -101,6 +101,13 @@ Generic (`mcpServers`-style clients):
 - `fetch_content(url, max_chars?, timeout_ms?)`
   — fetches a public http/https page (URL ≤ 2048 chars) and returns readable Markdown
   with title, byline and a `truncated` flag; `timeout_ms` is capped at 120000.
+- `image_search(query, engines?, language?, safesearch?, pageno?, max_results?)`
+  — finds images: direct file links (`imgSrc`), optional `thumbnailSrc`,
+  `resolution`, `imgFormat` and `source`. Markdown preview thumbnails are
+  included when available.
+- `news_search(query, time_range?, engines?, language?, safesearch?, pageno?, max_results?)`
+  — finds recent news articles with `publishedDate` and a freshness filter
+  (`time_range`: `day` | `week` | `month` | `year`).
 
 Both tools annotate their results as untrusted; clients should treat returned content
 as data, never as instructions.

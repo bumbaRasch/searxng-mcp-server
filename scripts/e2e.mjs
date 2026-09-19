@@ -103,6 +103,8 @@ async function main() {
     const names = tools.result?.tools?.map((tool) => tool.name) ?? [];
     assert(names.includes('search'), 'tools/list registers "search"');
     assert(names.includes('fetch_content'), 'tools/list registers "fetch_content"');
+    assert(names.includes('image_search'), 'tools/list registers "image_search"');
+    assert(names.includes('news_search'), 'tools/list registers "news_search"');
 
     // 3. search against the live SearXNG instance
     const searchCall = await request(serverProcess, 'tools/call', {
@@ -131,6 +133,32 @@ async function main() {
       /example/i.test(exampleText) && /domain/i.test(exampleText),
       'fetch_content example.com returns Markdown content',
     );
+
+    // 4a. image_search against the live SearXNG instance
+    const imageCall = await request(serverProcess, 'tools/call', {
+      name: 'image_search',
+      arguments: { query: 'red panda', max_results: 5 },
+    });
+    assert(!imageCall.error && !imageCall.result?.isError, 'image_search call succeeds');
+    const imageStructured = imageCall.result?.structuredContent;
+    assert(
+      Array.isArray(imageStructured?.results) && imageStructured.results.length > 0,
+      `image_search returns results (got ${imageStructured?.results?.length ?? 0})`,
+    );
+    assert(
+      typeof imageStructured.results[0].imgSrc === 'string' &&
+        imageStructured.results[0].imgSrc.length > 0,
+      'image_search results carry imgSrc',
+    );
+
+    // 4b. news_search against the live SearXNG instance
+    const newsCall = await request(serverProcess, 'tools/call', {
+      name: 'news_search',
+      arguments: { query: 'linux', time_range: 'week', max_results: 5 },
+    });
+    assert(!newsCall.error && !newsCall.result?.isError, 'news_search call succeeds');
+    const newsStructured = newsCall.result?.structuredContent;
+    assert(Array.isArray(newsStructured?.results), 'news_search returns a results array');
 
     // 5. SSRF guard: private address must be rejected
     const ssrfCall = await request(serverProcess, 'tools/call', {

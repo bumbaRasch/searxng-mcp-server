@@ -26,6 +26,12 @@ SearXNG (docker, 127.0.0.1:8888)   external website
 The server is a thin, stateless adapter. SearXNG aggregates upstream search
 engines; `fetch_content` retrieves and extracts a single page.
 
+Four tools are exposed: `search`, `fetch_content`, `image_search`, and
+`news_search`. The media tools are thin category-specialized wrappers over
+the same SearXNG client (`fetchSearchJson` + dedicated projections); they
+never download images — only URL strings (`thumbnailSrc` is the hook for a
+future base64/ImageContent preview).
+
 ## Module layout
 
 | Module | Responsibility |
