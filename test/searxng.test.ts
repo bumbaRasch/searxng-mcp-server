@@ -110,6 +110,41 @@ describe('mapSearchResponse', () => {
     ]);
   });
 
+  it('projects infoboxes: truncates strings, caps urls, drops unusable ones', () => {
+    const res = mapSearchResponse(
+      {
+        infoboxes: [
+          {
+            infobox: 'Berlin',
+            content: 'y'.repeat(2000),
+            engine: 'wikipedia',
+            urls: Array.from({ length: 15 }, (_, i) => `https://u${i}.test`),
+          },
+          { id: 'x', urls: ['https://ok.test', 7, null] },
+          'junk',
+          null,
+          {},
+        ],
+      },
+      10,
+    );
+    expect(res.infoboxes).toHaveLength(2);
+    expect(res.infoboxes[0]?.infobox).toBe('Berlin');
+    expect(res.infoboxes[0]?.content).toBe(`${'y'.repeat(999)}…`);
+    expect(res.infoboxes[0]?.engine).toBe('wikipedia');
+    expect(res.infoboxes[0]?.urls).toHaveLength(10);
+    expect(res.infoboxes[1]).toEqual({ id: 'x', urls: ['https://ok.test'] });
+  });
+
+  it('truncates oversized answers', () => {
+    const res = mapSearchResponse(
+      { answers: ['a'.repeat(2000), { answer: 'b'.repeat(2000) }] },
+      10,
+    );
+    expect(res.answers[0]?.answer).toBe(`${'a'.repeat(999)}…`);
+    expect(res.answers[1]?.answer).toBe(`${'b'.repeat(999)}…`);
+  });
+
   it('caps array fields and truncates result content', () => {
     const res = mapSearchResponse(
       {
@@ -118,7 +153,7 @@ describe('mapSearchResponse', () => {
         unresponsive_engines: Array.from({ length: 25 }, (_, i) => [`e${i}`, 'timeout']),
         corrections: Array.from({ length: 25 }, (_, i) => `c${i}`),
         suggestions: Array.from({ length: 25 }, (_, i) => `s${i}`),
-        infoboxes: Array.from({ length: 25 }, (_, i) => ({ id: i })),
+        infoboxes: Array.from({ length: 25 }, (_, i) => ({ id: String(i) })),
       },
       10,
     );
@@ -127,6 +162,7 @@ describe('mapSearchResponse', () => {
     expect(res.corrections).toHaveLength(20);
     expect(res.suggestions).toHaveLength(20);
     expect(res.infoboxes).toHaveLength(20);
+    expect(res.infoboxes[0]).toEqual({ id: '0' });
     expect(res.results[0]?.content.length).toBeLessThanOrEqual(1000);
     expect(res.results[0]?.content).toHaveLength(1000);
     expect(res.results[0]?.content.endsWith('…')).toBe(true);

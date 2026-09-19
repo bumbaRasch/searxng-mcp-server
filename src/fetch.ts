@@ -1,12 +1,13 @@
 import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
 import TurndownService from 'turndown';
-// undici's fetch + Agent must come from the same installed copy so the guarded
-// `lookup` handed to the dispatcher is honored by the client opening the socket.
-import { Agent, fetch as undiciFetch } from 'undici';
+// undici's fetch must come from the same installed copy as the guarded
+// dispatcher (built in ssrf.ts) so the guarded `lookup` handed to the
+// dispatcher is honored by the client opening the socket.
+import { fetch as undiciFetch } from 'undici';
 import type { Config } from './config.js';
 import { readCapped, type FetchLike } from './http.js';
-import { assertUrlAllowed, createGuardedLookup, type LookupAll } from './ssrf.js';
+import { assertUrlAllowed, createGuardedDispatcher, type LookupAll } from './ssrf.js';
 import type { FetchResult } from './types.js';
 
 const turndown = new TurndownService({
@@ -140,15 +141,13 @@ export async function fetchContent(
   const maxChars = opts.maxChars ?? config.maxChars;
   const timeoutMs = opts.timeoutMs ?? config.fetchTimeoutMs;
   const lookupOpts = opts.lookup ? { lookup: opts.lookup } : {};
-  // ONE guarded lookup shared by pre-validation and the dispatcher, so DNS is
-  // resolved once per host and both paths see the same addresses (anti-rebind).
-  const lookup = createGuardedLookup({
+  // Pre-validation (assertUrlAllowed) and the guarded dispatcher both apply the
+  // same SSRF guard to the same underlying lookup, so both paths see the same
+  // validated addresses (anti-rebind).
+  const dispatcher = createGuardedDispatcher({
     allowPrivateHosts: config.allowPrivateHosts,
     ...lookupOpts,
   });
-  // Cast unavoidable: undici's connect.lookup type is narrower than the guarded
-  // callback signature (same pattern as createGuardedDispatcher in ssrf.ts).
-  const dispatcher = new Agent({ connect: { lookup: lookup as never } });
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);

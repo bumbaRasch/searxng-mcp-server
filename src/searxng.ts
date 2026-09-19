@@ -1,10 +1,17 @@
 import { URLSearchParams } from 'node:url';
 import type { Config } from './config.js';
 import { readCapped, type FetchLike } from './http.js';
-import type { SearchAnswer, SearchParams, SearchResponse, SearchResult } from './types.js';
+import type {
+  SearchAnswer,
+  SearchInfobox,
+  SearchParams,
+  SearchResponse,
+  SearchResult,
+} from './types.js';
 
 const MAX_RESULT_CONTENT_CHARS = 1000;
 const MAX_ARRAY_ITEMS = 20;
+const MAX_URLS_PER_INFOBOX = 10;
 
 export const DEFAULT_MAX_RESULTS = 10;
 
@@ -55,7 +62,7 @@ function truncateText(text: string, max: number): string {
 }
 
 function projectAnswer(value: unknown): SearchAnswer | null {
-  if (typeof value === 'string') return { answer: value };
+  if (typeof value === 'string') return { answer: truncateText(value, MAX_RESULT_CONTENT_CHARS) };
   if (!isRecord(value)) return null;
   const answer =
     typeof value.answer === 'string'
@@ -64,10 +71,30 @@ function projectAnswer(value: unknown): SearchAnswer | null {
         ? value.content
         : null;
   if (answer === null) return null;
-  const out: SearchAnswer = { answer };
+  const out: SearchAnswer = { answer: truncateText(answer, MAX_RESULT_CONTENT_CHARS) };
   if (typeof value.url === 'string') out.url = value.url;
   if (typeof value.engine === 'string') out.engine = value.engine;
   return out;
+}
+
+function projectInfobox(value: unknown): SearchInfobox | null {
+  if (!isRecord(value)) return null;
+  const out: SearchInfobox = {};
+  if (typeof value.infobox === 'string') {
+    out.infobox = truncateText(value.infobox, MAX_RESULT_CONTENT_CHARS);
+  }
+  if (typeof value.id === 'string') out.id = truncateText(value.id, 200);
+  if (typeof value.content === 'string') {
+    out.content = truncateText(value.content, MAX_RESULT_CONTENT_CHARS);
+  }
+  if (typeof value.engine === 'string') out.engine = value.engine;
+  if (Array.isArray(value.urls)) {
+    out.urls = value.urls
+      .filter((url): url is string => typeof url === 'string')
+      .slice(0, MAX_URLS_PER_INFOBOX)
+      .map((url) => truncateText(url, 500));
+  }
+  return Object.keys(out).length > 0 ? out : null;
 }
 
 function projectUnresponsive(value: unknown): [string, string] | null {
@@ -114,7 +141,10 @@ export function mapSearchResponse(raw: unknown, maxResults: number): SearchRespo
     results: rawResults.slice(0, Math.max(0, maxResults)).map(projectResult),
     answers,
     corrections: asStringArray(data.corrections).slice(0, MAX_ARRAY_ITEMS),
-    infoboxes: (Array.isArray(data.infoboxes) ? data.infoboxes : []).slice(0, MAX_ARRAY_ITEMS),
+    infoboxes: (Array.isArray(data.infoboxes) ? data.infoboxes : [])
+      .map(projectInfobox)
+      .filter((item): item is SearchInfobox => item !== null)
+      .slice(0, MAX_ARRAY_ITEMS),
     suggestions: asStringArray(data.suggestions).slice(0, MAX_ARRAY_ITEMS),
     unresponsiveEngines,
   };

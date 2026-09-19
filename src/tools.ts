@@ -60,7 +60,15 @@ export const searchOutput = z.object({
     z.object({ answer: z.string(), url: z.string().optional(), engine: z.string().optional() }),
   ),
   corrections: z.array(z.string()),
-  infoboxes: z.array(z.unknown()),
+  infoboxes: z.array(
+    z.object({
+      infobox: z.string().optional(),
+      id: z.string().optional(),
+      content: z.string().optional(),
+      engine: z.string().optional(),
+      urls: z.array(z.string()).optional(),
+    }),
+  ),
   suggestions: z.array(z.string()),
   unresponsiveEngines: z.array(z.tuple([z.string(), z.string()])),
 });
@@ -104,7 +112,7 @@ export async function handleSearch(
         safesearch: args.safesearch,
         maxResults: args.max_results ?? DEFAULT_MAX_RESULTS,
       },
-      deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {},
+      { fetchImpl: deps.fetchImpl },
     );
     return {
       content: [{ type: 'text', text: formatSearchResults(response) }],
@@ -125,13 +133,11 @@ export async function handleFetch(
   deps: { fetchImpl?: typeof fetch } = {},
 ): Promise<ToolResult> {
   try {
-    const result = await fetchContent(
-      config,
-      args.url,
-      deps.fetchImpl
-        ? { maxChars: args.max_chars, timeoutMs: args.timeout_ms, fetchImpl: deps.fetchImpl }
-        : { maxChars: args.max_chars, timeoutMs: args.timeout_ms },
-    );
+    const result = await fetchContent(config, args.url, {
+      maxChars: args.max_chars,
+      timeoutMs: args.timeout_ms,
+      fetchImpl: deps.fetchImpl,
+    });
     return {
       content: [{ type: 'text', text: formatFetchedPage(result) }],
       structuredContent: result,

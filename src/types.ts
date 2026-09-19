@@ -26,12 +26,20 @@ export interface SearchAnswer {
   engine?: string;
 }
 
+export interface SearchInfobox {
+  infobox?: string;
+  id?: string;
+  content?: string;
+  engine?: string;
+  urls?: string[];
+}
+
 export interface SearchResponse {
   query: string;
   results: SearchResult[];
   answers: SearchAnswer[];
   corrections: string[];
-  infoboxes: unknown[];
+  infoboxes: SearchInfobox[];
   suggestions: string[];
   unresponsiveEngines: [string, string][];
 }

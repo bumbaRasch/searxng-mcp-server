@@ -39,7 +39,12 @@ describe('handleSearch', () => {
   it('returns markdown and structured content on success', async () => {
     const fetchImpl = (async () =>
       new Response(
-        JSON.stringify({ query: 'q', results: [{ title: 'T', url: 'https://t', content: 'c' }] }),
+        JSON.stringify({
+          query: 'q',
+          results: [{ title: 'T', url: 'https://t', content: 'c' }],
+          answers: ['a'.repeat(2000)],
+          infoboxes: [{ id: 'x', content: 'z'.repeat(2000), urls: ['https://i.test'] }],
+        }),
         {
           status: 200,
           headers: { 'content-type': 'application/json' },
@@ -48,8 +53,14 @@ describe('handleSearch', () => {
     const result = await handleSearch(config, searchInput.parse({ query: 'q' }), { fetchImpl });
     expect(result.isError).toBeUndefined();
     expect(result.content[0]?.text).toContain('T');
-    const structured = result.structuredContent as { results: unknown[] };
+    const structured = result.structuredContent as {
+      results: unknown[];
+      answers: { answer: string }[];
+      infoboxes: { content?: string }[];
+    };
     expect(structured.results).toHaveLength(1);
+    expect(structured.answers[0]?.answer).toHaveLength(1000);
+    expect(structured.infoboxes[0]?.content).toHaveLength(1000);
     expect(searchOutput.safeParse(structured).success).toBe(true);
   });
 
