@@ -11,7 +11,7 @@ export const DEFAULT_MAX_RESULTS = 10;
 export const MAX_URLS_PER_INFOBOX = 10;
 
 // Shared argument fields, reused by every search-like input schema so the
-// three inputs can never drift apart.
+// inputs can never drift apart.
 const queryArg = z.string().min(1).max(500).describe('The search query.');
 const enginesArg = z
   .array(z.string().min(1))
