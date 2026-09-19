@@ -107,85 +107,54 @@ export async function handleFetch(
   }
 }
 
-export async function handleImageSearch(
-  config: Config,
-  args: ImageSearchInput,
-  deps: ToolDeps = {},
-): Promise<ToolResult> {
-  try {
-    const response = await imageSearch(config, args, { fetchImpl: deps.fetchImpl });
-    return {
-      content: [{ type: 'text', text: formatImageResults(response) }],
-      structuredContent: response,
-    };
-  } catch (error) {
-    const message =
-      error instanceof SearxngError
-        ? error.message
-        : `Image search failed: ${error instanceof Error ? error.message : String(error)}`;
-    return { content: [{ type: 'text', text: formatToolError(message) }], isError: true };
-  }
+function categoryHandler<Args, Response>(
+  errorLabel: string,
+  run: (config: Config, args: Args, deps: ToolDeps) => Promise<Response>,
+  render: (response: Response) => string,
+) {
+  return async (config: Config, args: Args, deps: ToolDeps = {}): Promise<ToolResult> => {
+    try {
+      const response = await run(config, args, deps);
+      return {
+        content: [{ type: 'text', text: render(response) }],
+        structuredContent: response,
+      };
+    } catch (error) {
+      const message =
+        error instanceof SearxngError
+          ? error.message
+          : `${errorLabel}: ${error instanceof Error ? error.message : String(error)}`;
+      return { content: [{ type: 'text', text: formatToolError(message) }], isError: true };
+    }
+  };
 }
 
-export async function handleNewsSearch(
-  config: Config,
-  args: NewsSearchInput,
-  deps: ToolDeps = {},
-): Promise<ToolResult> {
-  try {
-    const response = await newsSearch(config, args, { fetchImpl: deps.fetchImpl });
-    return {
-      content: [{ type: 'text', text: formatNewsResults(response) }],
-      structuredContent: response,
-    };
-  } catch (error) {
-    const message =
-      error instanceof SearxngError
-        ? error.message
-        : `News search failed: ${error instanceof Error ? error.message : String(error)}`;
-    return { content: [{ type: 'text', text: formatToolError(message) }], isError: true };
-  }
-}
+export const handleImageSearch = categoryHandler(
+  'Image search failed',
+  (config, args: ImageSearchInput, deps) =>
+    imageSearch(config, args, { fetchImpl: deps.fetchImpl }),
+  formatImageResults,
+);
 
-export async function handleVideoSearch(
-  config: Config,
-  args: VideoSearchInput,
-  deps: ToolDeps = {},
-): Promise<ToolResult> {
-  try {
-    const response = await videoSearch(config, args, { fetchImpl: deps.fetchImpl });
-    return {
-      content: [{ type: 'text', text: formatVideoResults(response) }],
-      structuredContent: response,
-    };
-  } catch (error) {
-    const message =
-      error instanceof SearxngError
-        ? error.message
-        : `Video search failed: ${error instanceof Error ? error.message : String(error)}`;
-    return { content: [{ type: 'text', text: formatToolError(message) }], isError: true };
-  }
-}
+export const handleNewsSearch = categoryHandler(
+  'News search failed',
+  (config, args: NewsSearchInput, deps) => newsSearch(config, args, { fetchImpl: deps.fetchImpl }),
+  formatNewsResults,
+);
 
-export async function handleMusicSearch(
-  config: Config,
-  args: MusicSearchInput,
-  deps: ToolDeps = {},
-): Promise<ToolResult> {
-  try {
-    const response = await musicSearch(config, args, { fetchImpl: deps.fetchImpl });
-    return {
-      content: [{ type: 'text', text: formatMusicResults(response) }],
-      structuredContent: response,
-    };
-  } catch (error) {
-    const message =
-      error instanceof SearxngError
-        ? error.message
-        : `Music search failed: ${error instanceof Error ? error.message : String(error)}`;
-    return { content: [{ type: 'text', text: formatToolError(message) }], isError: true };
-  }
-}
+export const handleVideoSearch = categoryHandler(
+  'Video search failed',
+  (config, args: VideoSearchInput, deps) =>
+    videoSearch(config, args, { fetchImpl: deps.fetchImpl }),
+  formatVideoResults,
+);
+
+export const handleMusicSearch = categoryHandler(
+  'Music search failed',
+  (config, args: MusicSearchInput, deps) =>
+    musicSearch(config, args, { fetchImpl: deps.fetchImpl }),
+  formatMusicResults,
+);
 
 export function registerTools(server: McpServer, config: Config, deps: ToolDeps = {}): void {
   server.registerTool(

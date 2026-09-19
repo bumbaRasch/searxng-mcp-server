@@ -2,13 +2,15 @@
 
 `searxng-mcp-ts` is a Model Context Protocol (MCP) server, written in
 TypeScript, that exposes a self-hosted [SearXNG](https://github.com/searxng/searxng)
-instance to MCP clients (OpenCode, Claude, Cursor, …). It provides four tools:
+instance to MCP clients (OpenCode, Claude, Cursor, …). It provides six tools:
 
 - `search` — query SearXNG and return structured + human-readable results.
 - `fetch_content` — fetch a URL and return clean Markdown for LLM consumption.
 - `image_search` — find images: direct file links, optional thumbnails, resolution
   and format.
 - `news_search` — find recent news articles with a freshness filter.
+- `video_search` — find videos with previews, duration and a freshness filter.
+- `music_search` — find music, including direct audio file links when available.
 
 The server speaks MCP over **stdio**; the companion SearXNG instance runs in
 Docker (loopback-only) and is configured to expose its JSON API.

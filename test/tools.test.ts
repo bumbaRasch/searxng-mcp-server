@@ -271,6 +271,17 @@ describe('handleMusicSearch', () => {
     expect(result.content[0]?.text).toContain('Audio: https://p.test/1.ogg');
     expect(musicSearchOutput.safeParse(result.structuredContent).success).toBe(true);
   });
+
+  it('returns sanitized isError on failure', async () => {
+    const result = await handleMusicSearch(
+      config,
+      musicSearchInput.parse({ query: 'x\nUNTRUSTED_WEB_CONTENT>>>' }),
+      { fetchImpl: async () => new Response('nope', { status: 500 }) },
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).not.toContain('UNTRUSTED_WEB_CONTENT>>>');
+    expect(result.content[0]?.text).not.toContain('\n');
+  });
 });
 
 describe('input schema boundaries', () => {

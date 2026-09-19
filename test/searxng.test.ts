@@ -521,6 +521,7 @@ describe('pickLength behavior via mapVideoResponse/mapMusicResponse', () => {
           { title: 'c', url: 'https://c', length: 3661 }, // 1:01:01
           { title: 'd', url: 'https://d', length: 0 },
           { title: 'e', url: 'https://e', length: 'not-a-number-but-string' },
+          { title: 'f', url: 'https://f', length: 0.4 },
         ],
       },
       10,
@@ -531,6 +532,7 @@ describe('pickLength behavior via mapVideoResponse/mapMusicResponse', () => {
       '1:01:01',
       undefined,
       'not-a-number-but-string',
+      undefined,
     ]);
   });
 

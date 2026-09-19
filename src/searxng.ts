@@ -98,6 +98,7 @@ function pickLength(value: unknown): string | undefined {
   }
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
     const total = Math.round(value);
+    if (total === 0) return undefined;
     const hours = Math.floor(total / 3600);
     const minutes = Math.floor((total % 3600) / 60);
     const seconds = total % 60;

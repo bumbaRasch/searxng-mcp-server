@@ -148,7 +148,7 @@ node scripts/e2e.mjs  # end-to-end: JSON-RPC handshake + tool calls against the 
 ```
 
 `scripts/e2e.mjs` spawns the built `dist/index.js`, performs the MCP handshake, calls
-`search`, `fetch_content`, `image_search` and `news_search`, and asserts that
+`search`, `fetch_content`, `image_search`, `news_search`, `video_search` and `music_search`, and asserts that
 private-network fetches are rejected by the SSRF guard. It requires the Docker stack from step 1 to be running.
 
 Architecture and security rationale live in [`docs/design.md`](docs/design.md).
