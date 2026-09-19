@@ -2199,6 +2199,8 @@ export function wrapUntrusted(content: string): string {
 - content containing `UNTRUSTED_WEB_CONTENT>>>` is defanged (the output contains exactly one close marker, at the very end);
 - `wrapUntrusted` output starts with the warning line and ends with the close marker.
 
+**Corrected formatters (authoritative — these supersede the Step 3 code below):**
+```ts
 export function formatSearchResults(response: SearchResponse): string {
   const lines: string[] = [`# Search results for "${response.query}"`];
   if (response.answers.length > 0) {
