@@ -6,6 +6,8 @@ import type { SearchAnswer, SearchParams, SearchResponse, SearchResult } from '.
 const MAX_RESULT_CONTENT_CHARS = 1000;
 const MAX_ARRAY_ITEMS = 20;
 
+export const DEFAULT_MAX_RESULTS = 10;
+
 export class SearxngError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
@@ -188,7 +190,7 @@ export async function search(
         { cause: error },
       );
     }
-    return mapSearchResponse(raw, params.maxResults ?? 10);
+    return mapSearchResponse(raw, params.maxResults ?? DEFAULT_MAX_RESULTS);
   } finally {
     clearTimeout(timer);
   }

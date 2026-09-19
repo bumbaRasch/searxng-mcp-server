@@ -3,7 +3,7 @@ import * as z from 'zod/v4';
 import type { Config } from './config.js';
 import { fetchContent } from './fetch.js';
 import { formatFetchedPage, formatSearchResults } from './format.js';
-import { SearxngError, search } from './searxng.js';
+import { DEFAULT_MAX_RESULTS, SearxngError, search } from './searxng.js';
 
 export type ToolResult = {
   content: { type: 'text'; text: string }[];
@@ -102,7 +102,7 @@ export async function handleSearch(
         timeRange: args.time_range,
         pageno: args.pageno,
         safesearch: args.safesearch,
-        maxResults: args.max_results ?? 10,
+        maxResults: args.max_results ?? DEFAULT_MAX_RESULTS,
       },
       deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {},
     );
