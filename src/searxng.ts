@@ -5,10 +5,15 @@ import {
   DEFAULT_MAX_RESULTS,
   MAX_URLS_PER_INFOBOX,
   toImageSearchParams,
+  toMusicSearchParams,
   toNewsSearchParams,
+  toVideoSearchParams,
   type ImageSearchInput,
   type ImageSearchResponse,
   type ImageSearchResult,
+  type MusicSearchInput,
+  type MusicSearchResponse,
+  type MusicSearchResult,
   type NewsSearchInput,
   type NewsSearchResponse,
   type NewsSearchResult,
@@ -17,6 +22,9 @@ import {
   type SearchParams,
   type SearchResponse,
   type SearchResult,
+  type VideoSearchInput,
+  type VideoSearchResponse,
+  type VideoSearchResult,
 } from './schemas.js';
 
 const MAX_RESULT_CONTENT_CHARS = 1000;
@@ -27,6 +35,7 @@ const MAX_TITLE_CHARS = 500;
 const MAX_SOURCE_CHARS = 200;
 const MAX_MEDIA_FIELD_CHARS = 50;
 const MAX_URL_CHARS = 1000;
+const MAX_AUTHOR_CHARS = 200; // same bound as MAX_SOURCE_CHARS, different semantics
 
 export class SearxngError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
@@ -72,6 +81,34 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function truncateText(text: string, max: number): string {
   if (text.length <= max) return text;
   return max <= 1 ? text.slice(0, max) : `${text.slice(0, max - 1)}…`;
+}
+
+/** SearXNG leaks the string 'None' (and blank strings) for missing dates. */
+function pickPublishedDate(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed === '' || trimmed === 'None' ? undefined : trimmed;
+}
+
+/** Upstream `length` is either a display string ("14:54") or numeric seconds. */
+function pickLength(value: unknown): string | undefined {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed === '' ? undefined : truncateText(trimmed, MAX_MEDIA_FIELD_CHARS);
+  }
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    const total = Math.round(value);
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const seconds = total % 60;
+    const mm = String(minutes).padStart(2, '0');
+    const ss = String(seconds).padStart(2, '0');
+    return truncateText(
+      hours > 0 ? `${hours}:${mm}:${ss}` : `${minutes}:${ss}`,
+      MAX_MEDIA_FIELD_CHARS,
+    );
+  }
+  return undefined;
 }
 
 function projectAnswer(value: unknown): SearchAnswer | null {
@@ -133,7 +170,8 @@ function projectResult(value: unknown): SearchResult {
     result.engines = asStringArray(raw.engines).slice(0, MAX_ARRAY_ITEMS);
   if (typeof raw.category === 'string') result.category = raw.category;
   if (typeof raw.score === 'number') result.score = raw.score;
-  if (typeof raw.publishedDate === 'string') result.publishedDate = raw.publishedDate;
+  const publishedDate = pickPublishedDate(raw.publishedDate);
+  if (publishedDate !== undefined) result.publishedDate = publishedDate;
   return result;
 }
 
@@ -316,7 +354,8 @@ function projectNewsResult(value: unknown): NewsSearchResult {
       MAX_RESULT_CONTENT_CHARS,
     ),
   };
-  if (typeof raw.publishedDate === 'string') result.publishedDate = raw.publishedDate;
+  const publishedDate = pickPublishedDate(raw.publishedDate);
+  if (publishedDate !== undefined) result.publishedDate = publishedDate;
   if (Array.isArray(raw.engines))
     result.engines = asStringArray(raw.engines).slice(0, MAX_ARRAY_ITEMS);
   return result;
@@ -350,4 +389,84 @@ export async function newsSearch(
 ): Promise<NewsSearchResponse> {
   const raw = await fetchSearchJson(config, toNewsSearchParams(input), opts);
   return mapNewsResponse(raw, input.max_results ?? DEFAULT_MAX_RESULTS);
+}
+
+function projectVideoResult(value: unknown): VideoSearchResult {
+  const raw = isRecord(value) ? value : {};
+  const result: VideoSearchResult = {
+    title: truncateText(typeof raw.title === 'string' ? raw.title : '', MAX_TITLE_CHARS),
+    url: truncateText(typeof raw.url === 'string' ? raw.url : '', MAX_URL_CHARS),
+  };
+  if (typeof raw.thumbnail === 'string' && raw.thumbnail.trim() !== '')
+    result.thumbnailSrc = truncateText(raw.thumbnail, MAX_URL_CHARS);
+  const length = pickLength(raw.length);
+  if (length !== undefined) result.length = length;
+  if (typeof raw.author === 'string') result.author = truncateText(raw.author, MAX_AUTHOR_CHARS);
+  const publishedDate = pickPublishedDate(raw.publishedDate);
+  if (publishedDate !== undefined) result.publishedDate = publishedDate;
+  if (Array.isArray(raw.engines))
+    result.engines = asStringArray(raw.engines).slice(0, MAX_ARRAY_ITEMS);
+  return result;
+}
+
+export function mapVideoResponse(raw: unknown, maxResults: number): VideoSearchResponse {
+  const data = isRecord(raw) ? raw : {};
+  return {
+    query: typeof data.query === 'string' ? data.query : '',
+    results: (Array.isArray(data.results) ? data.results : [])
+      .slice(0, Math.max(0, maxResults))
+      .map(projectVideoResult),
+    suggestions: asStringArray(data.suggestions).slice(0, MAX_ARRAY_ITEMS),
+    unresponsiveEngines: projectUnresponsiveList(data),
+  };
+}
+
+function projectMusicResult(value: unknown): MusicSearchResult {
+  const raw = isRecord(value) ? value : {};
+  const result: MusicSearchResult = {
+    title: truncateText(typeof raw.title === 'string' ? raw.title : '', MAX_TITLE_CHARS),
+    url: truncateText(typeof raw.url === 'string' ? raw.url : '', MAX_URL_CHARS),
+  };
+  if (typeof raw.audio_src === 'string' && raw.audio_src.trim() !== '')
+    result.audioSrc = truncateText(raw.audio_src, MAX_URL_CHARS);
+  if (typeof raw.thumbnail === 'string' && raw.thumbnail.trim() !== '')
+    result.thumbnailSrc = truncateText(raw.thumbnail, MAX_URL_CHARS);
+  const length = pickLength(raw.length);
+  if (length !== undefined) result.length = length;
+  if (typeof raw.author === 'string') result.author = truncateText(raw.author, MAX_AUTHOR_CHARS);
+  const publishedDate = pickPublishedDate(raw.publishedDate);
+  if (publishedDate !== undefined) result.publishedDate = publishedDate;
+  if (Array.isArray(raw.engines))
+    result.engines = asStringArray(raw.engines).slice(0, MAX_ARRAY_ITEMS);
+  return result;
+}
+
+export function mapMusicResponse(raw: unknown, maxResults: number): MusicSearchResponse {
+  const data = isRecord(raw) ? raw : {};
+  return {
+    query: typeof data.query === 'string' ? data.query : '',
+    results: (Array.isArray(data.results) ? data.results : [])
+      .slice(0, Math.max(0, maxResults))
+      .map(projectMusicResult),
+    suggestions: asStringArray(data.suggestions).slice(0, MAX_ARRAY_ITEMS),
+    unresponsiveEngines: projectUnresponsiveList(data),
+  };
+}
+
+export async function videoSearch(
+  config: Config,
+  input: VideoSearchInput,
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<VideoSearchResponse> {
+  const raw = await fetchSearchJson(config, toVideoSearchParams(input), opts);
+  return mapVideoResponse(raw, input.max_results ?? DEFAULT_MAX_RESULTS);
+}
+
+export async function musicSearch(
+  config: Config,
+  input: MusicSearchInput,
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<MusicSearchResponse> {
+  const raw = await fetchSearchJson(config, toMusicSearchParams(input), opts);
+  return mapMusicResponse(raw, input.max_results ?? DEFAULT_MAX_RESULTS);
 }

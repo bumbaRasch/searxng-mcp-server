@@ -3,19 +3,29 @@ import {
   buildSearchQuery,
   imageSearch,
   mapImageResponse,
+  mapMusicResponse,
   mapNewsResponse,
   mapSearchResponse,
+  mapVideoResponse,
+  musicSearch,
   newsSearch,
   search,
   SearxngError,
+  videoSearch,
 } from '../src/searxng.js';
 import {
   imageSearchInput,
   imageSearchOutput,
+  musicSearchInput,
+  musicSearchOutput,
   newsSearchInput,
   newsSearchOutput,
+  videoSearchInput,
+  videoSearchOutput,
   type ImageSearchResponse,
+  type MusicSearchResponse,
   type NewsSearchResponse,
+  type VideoSearchResponse,
 } from '../src/schemas.js';
 import { jsonResponse, makeConfig } from './helpers.js';
 import type { FetchLike } from '../src/http.js';
@@ -463,5 +473,134 @@ describe('imageSearch/newsSearch clients', () => {
       fetchImpl,
     });
     expect(res.results).toHaveLength(1);
+  });
+});
+
+describe("publishedDate 'None' quirk is filtered everywhere", () => {
+  it('drops the string "None" and empty dates in all four projections', () => {
+    const row = { title: 't', url: 'u', content: 'c', publishedDate: 'None' };
+    expect(
+      mapSearchResponse({ query: 'q', results: [row] }, 10).results[0]?.publishedDate,
+    ).toBeUndefined();
+    expect(
+      mapNewsResponse({ query: 'q', results: [{ ...row, publishedDate: '  ' }] }, 10).results[0]
+        ?.publishedDate,
+    ).toBeUndefined();
+    expect(
+      mapVideoResponse(
+        { query: 'q', results: [{ ...row, url: 'https://v', publishedDate: 'None' }] },
+        10,
+      ).results[0]?.publishedDate,
+    ).toBeUndefined();
+    expect(
+      mapMusicResponse(
+        { query: 'q', results: [{ ...row, url: 'https://m', publishedDate: 'None' }] },
+        10,
+      ).results[0]?.publishedDate,
+    ).toBeUndefined();
+    // real dates survive
+    expect(
+      mapVideoResponse(
+        { query: 'q', results: [{ ...row, url: 'https://v', publishedDate: '2025-07-16' }] },
+        10,
+      ).results[0]?.publishedDate,
+    ).toBe('2025-07-16');
+  });
+});
+
+describe('pickLength behavior via mapVideoResponse/mapMusicResponse', () => {
+  const base = { query: 'q', suggestions: [], unresponsive_engines: [] };
+
+  it('keeps display strings and converts numeric seconds', () => {
+    const res = mapVideoResponse(
+      {
+        ...base,
+        results: [
+          { title: 'a', url: 'https://a', length: '14:54' },
+          { title: 'b', url: 'https://b', length: 894 }, // 14:54
+          { title: 'c', url: 'https://c', length: 3661 }, // 1:01:01
+          { title: 'd', url: 'https://d', length: 0 },
+          { title: 'e', url: 'https://e', length: 'not-a-number-but-string' },
+        ],
+      },
+      10,
+    );
+    expect(res.results.map((r) => r.length)).toEqual([
+      '14:54',
+      '14:54',
+      '1:01:01',
+      undefined,
+      'not-a-number-but-string',
+    ]);
+  });
+
+  it('drops non-positive/NaN/Infinite lengths and rounds floats to seconds', () => {
+    const res = mapVideoResponse(
+      {
+        ...base,
+        results: [
+          { title: 'a', url: 'https://a', length: -5 },
+          { title: 'b', url: 'https://b', length: Number.NaN },
+          { title: 'c', url: 'https://c', length: Number.POSITIVE_INFINITY },
+          { title: 'd', url: 'https://d', length: 894.6 }, // rounds to 895 -> 14:55
+        ],
+      },
+      10,
+    );
+    expect(res.results.map((r) => r.length)).toEqual([undefined, undefined, undefined, '14:55']);
+  });
+
+  it('music keeps results without audioSrc (soft mode) and maps audioSrc when present', () => {
+    const res = mapMusicResponse(
+      {
+        ...base,
+        results: [
+          { title: 'radio', url: 'https://r' }, // no audio_src -> kept
+          { title: 'file', url: 'https://f', audio_src: 'https://f.ogg' },
+          { title: 'bad', url: 'https://x', audio_src: 42 },
+        ],
+      },
+      10,
+    );
+    expect(res.results).toHaveLength(3);
+    expect(res.results[0]?.audioSrc).toBeUndefined();
+    expect(res.results[1]?.audioSrc).toBe('https://f.ogg');
+    expect(res.results[2]?.audioSrc).toBeUndefined();
+    expect(musicSearchOutput.safeParse(res).success).toBe(true);
+  });
+});
+
+describe('videoSearch/musicSearch clients', () => {
+  it('request videos/music categories, map time_range, slice by max_results', async () => {
+    const seen: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      seen.push(url);
+      return jsonResponse({
+        query: 'q',
+        results: [
+          { title: '1', url: 'https://1', length: '1:00' },
+          { title: '2', url: 'https://2' },
+        ],
+      });
+    }) as unknown as FetchLike;
+    const video: VideoSearchResponse = await videoSearch(
+      config,
+      videoSearchInput.parse({ query: 'q', time_range: 'month', max_results: 1 }),
+      { fetchImpl },
+    );
+    expect(seen[0]).toContain('categories=videos');
+    expect(seen[0]).toContain('time_range=month');
+    expect(video.results).toHaveLength(1);
+    expect(videoSearchOutput.safeParse(video).success).toBe(true);
+
+    const music: MusicSearchResponse = await musicSearch(
+      config,
+      musicSearchInput.parse({ query: 'q' }),
+      {
+        fetchImpl,
+      },
+    );
+    expect(seen[1]).toContain('categories=music');
+    expect(music.results[0]?.title).toBe('1');
   });
 });
