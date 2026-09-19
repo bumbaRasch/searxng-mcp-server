@@ -1122,26 +1122,33 @@ Replace `parseIpv4` + `isIpBlocked` with a numeric `node:net` `BlockList` (fail 
 ```ts
 import { BlockList, isIP } from 'node:net';
 
-const BLOCKED = new BlockList();
+// NOTE: a single BlockList mixing ipv4 and ipv6 subnets is buggy on Node 26
+// (`check('8.8.8.8', 'ipv4')` returns true once `::ffff:0:0/96` is added), so
+// keep two separate lists and dispatch by the family reported by isIP.
+const BLOCKED_V4 = new BlockList();
 const V4_RANGES: ReadonlyArray<readonly [string, number]> = [
   ['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8],
   ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.0.2.0', 24],
   ['192.168.0.0', 16], ['198.18.0.0', 15], ['198.51.100.0', 24], ['203.0.113.0', 24],
   ['224.0.0.0', 4], ['240.0.0.0', 4],
 ];
-for (const [net, prefix] of V4_RANGES) BLOCKED.addSubnet(net, prefix, 'ipv4');
+for (const [net, prefix] of V4_RANGES) BLOCKED_V4.addSubnet(net, prefix, 'ipv4');
+
+const BLOCKED_V6 = new BlockList();
 const V6_RANGES: ReadonlyArray<readonly [string, number]> = [
   ['::', 128], ['::1', 128], ['::ffff:0:0', 96], ['::', 96], ['64:ff9b::', 96],
   ['100::', 64], ['2001:db8::', 32], ['2002::', 16], ['fc00::', 7], ['fe80::', 10],
   ['fec0::', 10], ['ff00::', 8],
 ];
-for (const [net, prefix] of V6_RANGES) BLOCKED.addSubnet(net, prefix, 'ipv6');
+for (const [net, prefix] of V6_RANGES) BLOCKED_V6.addSubnet(net, prefix, 'ipv6');
 
 function normalizeIp(ip: string): { address: string; family: number } | null {
   let address = ip.trim().toLowerCase();
+  // Drop all brackets and the zone id, in any order (e.g. `[fe80::1%eth0]`,
+  // `[fe80::1]%eth0`), then classify the bare literal.
+  address = address.replace(/[[\]]/g, '');
   const zone = address.indexOf('%');
   if (zone !== -1) address = address.slice(0, zone);
-  if (address.startsWith('[') && address.endsWith(']')) address = address.slice(1, -1);
   const family = isIP(address);
   return family === 0 ? null : { address, family };
 }
@@ -1149,8 +1156,9 @@ function normalizeIp(ip: string): { address: string; family: number } | null {
 export function isIpBlocked(ip: string): boolean {
   const normalized = normalizeIp(ip);
   if (normalized === null) return false;
+  const list = normalized.family === 4 ? BLOCKED_V4 : BLOCKED_V6;
   try {
-    return BLOCKED.check(normalized.address, normalized.family === 4 ? 'ipv4' : 'ipv6');
+    return list.check(normalized.address);
   } catch {
     return true; // fail closed on unparseable input
   }
@@ -1161,12 +1169,22 @@ Verify with `node -e` that `BlockList.check('::ffff:7f00:1','ipv6')` is true; if
 Test additions (`test/ssrf.test.ts`) — extend the table with:
 `['::ffff:7f00:1', true]`, `['::ffff:a9fe:a9fe', true]`, `['fe90::1', true]`,
 `['febf::1', true]`, `['fec0::1', true]`, `['64:ff9b::7f00:1', true]`,
-`['::ffff:8.8.8.8', true]`, `['2606:4700:4700::1111', false]`; plus:
+`['::ffff:8.8.8.8', true]`, `['2606:4700:4700::1111', false]`,
+`['[::1]', true]`, `['fe80::1%eth0', true]`, `['[fe80::1%eth0]', true]`; plus:
 ```ts
   it('blocks an IPv4-mapped IPv6 URL after normalization', async () => {
     await expect(
       assertUrlAllowed('http://[::ffff:127.0.0.1]/', { allowPrivateHosts: false }),
     ).rejects.toThrow(/private|reserved/i);
+  });
+
+  it('still rejects scheme/credentials when allowPrivateHosts is true', async () => {
+    await expect(assertUrlAllowed('file:///etc/passwd', { allowPrivateHosts: true })).rejects.toThrow(
+      /http/i,
+    );
+    await expect(
+      assertUrlAllowed('http://user:pass@x.test', { allowPrivateHosts: true }),
+    ).rejects.toThrow(/credentials/i);
   });
 ```
 
