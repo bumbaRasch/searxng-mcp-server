@@ -1960,6 +1960,13 @@ Tests: cast stubs `as unknown as FetchLike`; add:
   });
 ```
 
+Additional polish (also authoritative):
+1. On redirect and error paths, consume/cancel the response body eagerly:
+   `await response.body?.cancel().catch(() => undefined);` before `continue`/`throw`.
+2. The redirect-cap test must pin the exact contract: `expect(count).toBe(MAX_REDIRECTS + 1)` (export `MAX_REDIRECTS` from `src/fetch.ts` for the test).
+3. The downgrade error message must not print the raw scheme with colon — use
+   `initialScheme.replace(':', '')` (e.g. "Refusing to downgrade https to http on redirect.").
+
 - [ ] **Step 1: Write the failing tests**
 
 `test/fetch-content.test.ts`:
