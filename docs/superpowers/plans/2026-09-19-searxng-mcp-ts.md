@@ -321,6 +321,12 @@ describe('loadConfig', () => {
   it('honors a custom USER_AGENT', () => {
     expect(loadConfig({ USER_AGENT: 'custom/1' }).userAgent).toBe('custom/1');
   });
+
+  it('falls back when URL / USER_AGENT are blank or slash-only', () => {
+    expect(loadConfig({ SEARXNG_URL: '   ' }).searxngUrl).toBe('http://localhost:8888');
+    expect(loadConfig({ SEARXNG_URL: '/' }).searxngUrl).toBe('http://localhost:8888');
+    expect(loadConfig({ USER_AGENT: '' }).userAgent).toBe('searxng-mcp-ts/0.0.0');
+  });
 });
 ```
 
@@ -403,14 +409,24 @@ function boolEnv(env: Env, key: string, fallback: boolean): boolean {
   return ['1', 'true', 'yes', 'on'].includes(raw.trim().toLowerCase());
 }
 
+function strEnv(env: Env, key: string, fallback: string): string {
+  const raw = env[key];
+  return raw === undefined || raw.trim() === '' ? fallback : raw;
+}
+
+function urlEnv(env: Env, key: string, fallback: string): string {
+  const stripped = strEnv(env, key, fallback).replace(/\/+$/, '');
+  return stripped === '' ? fallback : stripped;
+}
+
 export function loadConfig(env: Env, version = '0.0.0'): Config {
   const config: Config = {
-    searxngUrl: (env.SEARXNG_URL ?? 'http://localhost:8888').replace(/\/+$/, ''),
+    searxngUrl: urlEnv(env, 'SEARXNG_URL', 'http://localhost:8888'),
     searxngTimeoutMs: intEnv(env, 'SEARXNG_TIMEOUT_MS', 10_000),
     fetchTimeoutMs: intEnv(env, 'FETCH_TIMEOUT_MS', 15_000),
     maxChars: intEnv(env, 'MAX_CHARS', 25_000),
     maxResponseBytes: intEnv(env, 'MAX_RESPONSE_BYTES', 5_242_880),
-    userAgent: env.USER_AGENT ?? `searxng-mcp-ts/${version}`,
+    userAgent: strEnv(env, 'USER_AGENT', `searxng-mcp-ts/${version}`),
     allowPrivateHosts: boolEnv(env, 'ALLOW_PRIVATE_HOSTS', false),
   };
   if (env.SEARXNG_USERNAME) config.searxngUsername = env.SEARXNG_USERNAME;
@@ -422,7 +438,7 @@ export function loadConfig(env: Env, version = '0.0.0'): Config {
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `pnpm vitest run test/config.test.ts`
-Expected: PASS (7 tests).
+Expected: PASS (8 tests).
 
 - [ ] **Step 6: Commit**
 
