@@ -4,9 +4,17 @@
   "description": "MCP server for a self-hosted SearXNG instance: web search and page fetch, no API keys.",
   "type": "module",
   "license": "MIT",
-  "engines": { "node": ">=22" },
-  "bin": { "searxng-mcp-ts": "dist/index.js" },
-  "files": ["dist", "README.md", "LICENSE"],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "bin": {
+    "searxng-mcp-ts": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
