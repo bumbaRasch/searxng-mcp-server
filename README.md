@@ -47,10 +47,16 @@ pnpm install && pnpm build
 ### 3. Connect it
 
 MCP configuration is **client-provided**: the server does **not** read a `.env` file
-(`.env` is used only by Docker Compose for `SEARXNG_SECRET`). Pass environment
-variables in your client's MCP config.
+(`.env` is used only by Docker Compose for `SEARXNG_SECRET`). The examples below
+assume the server lives at `/absolute/path/to/searxng-mcp-ts` — replace with your
+real path. No `env` block is needed unless you override a default: `SEARXNG_URL`
+already defaults to `http://localhost:8888`. (Once the package is published to
+npm, every config below shrinks to `npx -y searxng-mcp-ts`.)
 
-OpenCode (`~/.config/opencode/opencode.json`):
+The SearXNG Docker stack must be running (`docker compose up -d` in the project
+directory; `restart: unless-stopped` survives reboots).
+
+OpenCode — global config `~/.config/opencode/opencode.json`:
 
 ```json
 {
@@ -58,26 +64,51 @@ OpenCode (`~/.config/opencode/opencode.json`):
     "searxng": {
       "type": "local",
       "command": ["node", "/absolute/path/to/searxng-mcp-ts/dist/index.js"],
-      "environment": { "SEARXNG_URL": "http://localhost:8888" },
       "enabled": true
     }
   }
 }
 ```
 
-Generic (`mcpServers`-style clients):
+Claude Code — one command, available in all projects:
+
+```bash
+claude mcp add --scope user searxng -- node /absolute/path/to/searxng-mcp-ts/dist/index.js
+```
+
+Or as a committed, team-shared `.mcp.json` at a project root:
 
 ```json
 {
   "mcpServers": {
     "searxng": {
       "command": "node",
-      "args": ["/absolute/path/to/searxng-mcp-ts/dist/index.js"],
-      "env": { "SEARXNG_URL": "http://localhost:8888" }
+      "args": ["/absolute/path/to/searxng-mcp-ts/dist/index.js"]
     }
   }
 }
 ```
+
+Cursor — `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project), same
+shape as Claude's `mcpServers` block above.
+
+Claude Desktop — `claude_desktop_config.json`
+(Linux: `~/.config/Claude/`, macOS: `~/Library/Application Support/Claude/`,
+Windows: `%APPDATA%\Claude\`), then fully restart the app:
+
+```json
+{
+  "mcpServers": {
+    "searxng": {
+      "command": "node",
+      "args": ["/absolute/path/to/searxng-mcp-ts/dist/index.js"]
+    }
+  }
+}
+```
+
+Other `mcpServers`-style clients — use the same block; VS Code and Visual Studio
+use a top-level `servers` key with an explicit `"type": "stdio"`.
 
 ## Configuration
 
