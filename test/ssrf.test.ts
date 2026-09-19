@@ -40,6 +40,7 @@ describe('isIpBlocked', () => {
     ['[::1]', true],
     ['fe80::1%eth0', true],
     ['[fe80::1%eth0]', true],
+    ['[fe80::1]%eth0', true],
   ])('classifies %s as blocked=%s', (ip, blocked) => {
     expect(isIpBlocked(ip)).toBe(blocked);
   });

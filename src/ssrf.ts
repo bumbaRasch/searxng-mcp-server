@@ -43,7 +43,9 @@ for (const [net, prefix] of V6_RANGES) BLOCKED_V6.addSubnet(net, prefix, 'ipv6')
 
 function normalizeIp(ip: string): { address: string; family: number } | null {
   let address = ip.trim().toLowerCase();
-  if (address.startsWith('[') && address.endsWith(']')) address = address.slice(1, -1);
+  // Drop all brackets and the zone id, in any order (e.g. `[fe80::1%eth0]`,
+  // `[fe80::1]%eth0`), then classify the bare literal.
+  address = address.replace(/[[\]]/g, '');
   const zone = address.indexOf('%');
   if (zone !== -1) address = address.slice(0, zone);
   const family = isIP(address);
