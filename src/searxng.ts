@@ -4,6 +4,14 @@ import { readCapped, type FetchLike } from './http.js';
 import {
   DEFAULT_MAX_RESULTS,
   MAX_URLS_PER_INFOBOX,
+  toImageSearchParams,
+  toNewsSearchParams,
+  type ImageSearchInput,
+  type ImageSearchResponse,
+  type ImageSearchResult,
+  type NewsSearchInput,
+  type NewsSearchResponse,
+  type NewsSearchResult,
   type SearchAnswer,
   type SearchInfobox,
   type SearchParams,
@@ -15,6 +23,12 @@ const MAX_RESULT_CONTENT_CHARS = 1000;
 const MAX_INFOBOX_ID_CHARS = 200;
 const MAX_INFOBOX_URL_CHARS = 500;
 const MAX_ARRAY_ITEMS = 20;
+const MAX_TITLE_CHARS = 500;
+const MAX_SOURCE_CHARS = 200;
+const MAX_MEDIA_FIELD_CHARS = 50;
+const MAX_URL_CHARS = 1000;
+
+export type { ImageSearchResponse, NewsSearchResponse } from './schemas.js';
 
 export class SearxngError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
@@ -131,12 +145,6 @@ export function mapSearchResponse(raw: unknown, maxResults: number): SearchRespo
     .map(projectAnswer)
     .filter((item): item is SearchAnswer => item !== null)
     .slice(0, MAX_ARRAY_ITEMS);
-  const unresponsiveEngines = (
-    Array.isArray(data.unresponsive_engines) ? data.unresponsive_engines : []
-  )
-    .map(projectUnresponsive)
-    .filter((item): item is [string, string] => item !== null)
-    .slice(0, MAX_ARRAY_ITEMS);
   return {
     query: typeof data.query === 'string' ? data.query : '',
     results: rawResults.slice(0, Math.max(0, maxResults)).map(projectResult),
@@ -147,7 +155,7 @@ export function mapSearchResponse(raw: unknown, maxResults: number): SearchRespo
       .filter((item): item is SearchInfobox => item !== null)
       .slice(0, MAX_ARRAY_ITEMS),
     suggestions: asStringArray(data.suggestions).slice(0, MAX_ARRAY_ITEMS),
-    unresponsiveEngines,
+    unresponsiveEngines: projectUnresponsiveList(data),
   };
 }
 
@@ -236,4 +244,109 @@ export async function search(
 ): Promise<SearchResponse> {
   const raw = await fetchSearchJson(config, params, opts);
   return mapSearchResponse(raw, params.maxResults ?? DEFAULT_MAX_RESULTS);
+}
+
+function pickThumbnail(value: Record<string, unknown>): string | undefined {
+  const primary =
+    typeof value.thumbnail_src === 'string' && value.thumbnail_src.trim() !== ''
+      ? value.thumbnail_src
+      : undefined;
+  const fallback =
+    typeof value.thumbnail === 'string' && value.thumbnail.trim() !== ''
+      ? value.thumbnail
+      : undefined;
+  return primary ?? fallback;
+}
+
+function projectImageResult(value: unknown): ImageSearchResult | null {
+  if (!isRecord(value)) return null;
+  // An image result without a usable img_src is useless: drop it entirely.
+  const imgSrc = typeof value.img_src === 'string' ? value.img_src.trim() : '';
+  if (imgSrc === '') return null;
+  const result: ImageSearchResult = {
+    title: truncateText(typeof value.title === 'string' ? value.title : '', MAX_TITLE_CHARS),
+    url: truncateText(typeof value.url === 'string' ? value.url : '', MAX_URL_CHARS),
+    imgSrc: truncateText(imgSrc, MAX_URL_CHARS),
+  };
+  const thumbnail = pickThumbnail(value);
+  if (thumbnail !== undefined) result.thumbnailSrc = truncateText(thumbnail, MAX_URL_CHARS);
+  if (typeof value.resolution === 'string')
+    result.resolution = truncateText(value.resolution, MAX_MEDIA_FIELD_CHARS);
+  if (typeof value.img_format === 'string')
+    result.imgFormat = truncateText(value.img_format, MAX_MEDIA_FIELD_CHARS);
+  if (typeof value.source === 'string')
+    result.source = truncateText(value.source, MAX_SOURCE_CHARS);
+  if (Array.isArray(value.engines)) result.engines = asStringArray(value.engines);
+  return result;
+}
+
+function projectUnresponsiveList(data: Record<string, unknown>): [string, string][] {
+  return (Array.isArray(data.unresponsive_engines) ? data.unresponsive_engines : [])
+    .map(projectUnresponsive)
+    .filter((item): item is [string, string] => item !== null)
+    .slice(0, MAX_ARRAY_ITEMS);
+}
+
+export function mapImageResponse(raw: unknown, maxResults: number): ImageSearchResponse {
+  const data = isRecord(raw) ? raw : {};
+  return {
+    query: typeof data.query === 'string' ? data.query : '',
+    results: (Array.isArray(data.results) ? data.results : [])
+      .map(projectImageResult)
+      .filter((item): item is ImageSearchResult => item !== null)
+      .slice(0, Math.max(0, maxResults)),
+    suggestions: asStringArray(data.suggestions).slice(0, MAX_ARRAY_ITEMS),
+    unresponsiveEngines: projectUnresponsiveList(data),
+  };
+}
+
+function projectNewsResult(value: unknown): NewsSearchResult {
+  const raw: {
+    title?: unknown;
+    url?: unknown;
+    content?: unknown;
+    publishedDate?: unknown;
+    engines?: unknown;
+  } = isRecord(value) ? value : {};
+  const result: NewsSearchResult = {
+    title: truncateText(typeof raw.title === 'string' ? raw.title : '', MAX_TITLE_CHARS),
+    url: truncateText(typeof raw.url === 'string' ? raw.url : '', MAX_URL_CHARS),
+    content: truncateText(
+      typeof raw.content === 'string' ? raw.content : '',
+      MAX_RESULT_CONTENT_CHARS,
+    ),
+  };
+  if (typeof raw.publishedDate === 'string') result.publishedDate = raw.publishedDate;
+  if (Array.isArray(raw.engines)) result.engines = asStringArray(raw.engines);
+  return result;
+}
+
+export function mapNewsResponse(raw: unknown, maxResults: number): NewsSearchResponse {
+  const data = isRecord(raw) ? raw : {};
+  return {
+    query: typeof data.query === 'string' ? data.query : '',
+    results: (Array.isArray(data.results) ? data.results : [])
+      .slice(0, Math.max(0, maxResults))
+      .map(projectNewsResult),
+    suggestions: asStringArray(data.suggestions).slice(0, MAX_ARRAY_ITEMS),
+    unresponsiveEngines: projectUnresponsiveList(data),
+  };
+}
+
+export async function imageSearch(
+  config: Config,
+  input: ImageSearchInput,
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<ImageSearchResponse> {
+  const raw = await fetchSearchJson(config, toImageSearchParams(input), opts);
+  return mapImageResponse(raw, input.max_results ?? DEFAULT_MAX_RESULTS);
+}
+
+export async function newsSearch(
+  config: Config,
+  input: NewsSearchInput,
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<NewsSearchResponse> {
+  const raw = await fetchSearchJson(config, toNewsSearchParams(input), opts);
+  return mapNewsResponse(raw, input.max_results ?? DEFAULT_MAX_RESULTS);
 }

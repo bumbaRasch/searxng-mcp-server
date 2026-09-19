@@ -1,5 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { buildSearchQuery, mapSearchResponse, search, SearxngError } from '../src/searxng.js';
+import {
+  buildSearchQuery,
+  imageSearch,
+  mapImageResponse,
+  mapNewsResponse,
+  mapSearchResponse,
+  newsSearch,
+  search,
+  SearxngError,
+  type ImageSearchResponse,
+  type NewsSearchResponse,
+} from '../src/searxng.js';
+import {
+  imageSearchInput,
+  imageSearchOutput,
+  newsSearchInput,
+  newsSearchOutput,
+} from '../src/schemas.js';
 import { jsonResponse, makeConfig } from './helpers.js';
 import type { FetchLike } from '../src/http.js';
 
@@ -300,5 +317,128 @@ describe('search', () => {
     await expect(
       search({ ...config, searxngTimeoutMs: 10 }, { query: 'q' }, { fetchImpl }),
     ).rejects.toBeInstanceOf(SearxngError);
+  });
+});
+
+describe('mapImageResponse', () => {
+  const raw = {
+    query: 'cats',
+    results: [
+      {
+        title: 'A cat',
+        url: 'https://page.test/a',
+        img_src: 'https://img.test/a.png',
+        thumbnail_src: 'https://img.test/t.png',
+        resolution: '800×600',
+        img_format: 'PNG',
+        source: 'photo.test',
+        engines: ['bing images', 'duckduckgo images'],
+      },
+      { title: 'No image', url: 'https://page.test/b' }, // img_src отсутствует → результат отброшен
+      { title: 'Garbage', img_src: 123, url: 'https://page.test/c' }, // не-строка → отброшен
+      {
+        title: 'x'.repeat(600),
+        url: 'https://page.test/d',
+        img_src: 'https://img.test/d.png',
+        thumbnail: 'https://img.test/dt.png', // fallback: thumbnail вместо thumbnail_src
+      },
+    ],
+    suggestions: ['funny cats'],
+    unresponsive_engines: [['kagi', 'timeout']],
+  };
+
+  it('projects valid results, drops results without a usable img_src', () => {
+    const res = mapImageResponse(raw, 10);
+    expect(res.results).toHaveLength(2);
+    expect(res.results[0]).toEqual({
+      title: 'A cat',
+      url: 'https://page.test/a',
+      imgSrc: 'https://img.test/a.png',
+      thumbnailSrc: 'https://img.test/t.png',
+      resolution: '800×600',
+      imgFormat: 'PNG',
+      source: 'photo.test',
+      engines: ['bing images', 'duckduckgo images'],
+    });
+    expect(res.results[1]?.thumbnailSrc).toBe('https://img.test/dt.png');
+    expect(res.results[1]?.title).toHaveLength(500);
+    expect(res.suggestions).toEqual(['funny cats']);
+    expect(res.unresponsiveEngines).toEqual([['kagi', 'timeout']]);
+  });
+
+  it('slices results to maxResults and matches its output schema', () => {
+    const res = mapImageResponse(raw, 1);
+    expect(res.results).toHaveLength(1);
+    expect(imageSearchOutput.safeParse(mapImageResponse(raw, 10)).success).toBe(true);
+  });
+});
+
+describe('mapNewsResponse', () => {
+  const raw = {
+    query: 'fedora',
+    results: [
+      {
+        title: 'Fedora 45 beta',
+        url: 'https://t.test/1',
+        content: 'c'.repeat(2000),
+        publishedDate: '2026-09-16',
+        engines: ['bing news'],
+      },
+      { title: 'No date', url: 'https://t.test/2', content: 'ok' },
+      { title: 'Bad date', url: 'https://t.test/3', content: 'ok', publishedDate: 42 },
+    ],
+    suggestions: [],
+    unresponsive_engines: [],
+  };
+
+  it('projects, truncates content to 1000, keeps publishedDate only for strings', () => {
+    const res: NewsSearchResponse = mapNewsResponse(raw, 10);
+    expect(res.results).toHaveLength(3);
+    expect(res.results[0]?.content).toHaveLength(1000);
+    expect(res.results[0]?.publishedDate).toBe('2026-09-16');
+    expect(res.results[1]?.publishedDate).toBeUndefined();
+    expect(res.results[2]?.publishedDate).toBeUndefined();
+    expect(newsSearchOutput.safeParse(res).success).toBe(true);
+  });
+});
+
+describe('imageSearch/newsSearch clients', () => {
+  it('request the images/news categories and map the response', async () => {
+    const seen: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      seen.push(url);
+      return jsonResponse({
+        query: 'cats',
+        results: [{ title: 'Cat', url: 'https://p.test/c', img_src: 'https://i.test/c.png' }],
+      });
+    }) as unknown as FetchLike;
+    const res: ImageSearchResponse = await imageSearch(
+      config,
+      imageSearchInput.parse({ query: 'cats' }),
+      { fetchImpl },
+    );
+    expect(seen[0]).toContain('categories=images');
+    expect(res.results[0]?.imgSrc).toBe('https://i.test/c.png');
+
+    const newsRes = await newsSearch(config, newsSearchInput.parse({ query: 'cats' }), {
+      fetchImpl,
+    });
+    expect(seen[1]).toContain('categories=news');
+    expect(newsRes.results[0]?.title).toBe('Cat');
+  });
+
+  it('slices by max_results', async () => {
+    const fetchImpl = (async () =>
+      jsonResponse({
+        query: 'cats',
+        results: [
+          { title: '1', url: 'u1', img_src: 'i1' },
+          { title: '2', url: 'u2', img_src: 'i2' },
+        ],
+      })) as unknown as FetchLike;
+    const res = await imageSearch(config, imageSearchInput.parse({ query: 'q', max_results: 1 }), {
+      fetchImpl,
+    });
+    expect(res.results).toHaveLength(1);
   });
 });
