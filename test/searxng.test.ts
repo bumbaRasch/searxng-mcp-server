@@ -125,7 +125,8 @@ describe('mapSearchResponse', () => {
     expect(res.corrections).toHaveLength(20);
     expect(res.suggestions).toHaveLength(20);
     expect(res.infoboxes).toHaveLength(20);
-    expect(res.results[0]?.content).toHaveLength(1001);
+    expect(res.results[0]?.content.length).toBeLessThanOrEqual(1000);
+    expect(res.results[0]?.content).toHaveLength(1000);
     expect(res.results[0]?.content.endsWith('…')).toBe(true);
   });
 

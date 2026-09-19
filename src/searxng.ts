@@ -46,7 +46,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function truncateText(text: string, max: number): string {
-  return text.length <= max ? text : `${text.slice(0, max)}…`;
+  if (text.length <= max) return text;
+  return max <= 1 ? text.slice(0, max) : `${text.slice(0, max - 1)}…`;
 }
 
 function projectAnswer(value: unknown): SearchAnswer | null {
