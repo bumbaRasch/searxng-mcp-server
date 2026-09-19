@@ -58,9 +58,12 @@ searxng-mcp-ts/
 │  ├─ index.ts        # createServer() + stdio transport
 │  ├─ tools.ts        # registerTool: search, fetch_content
 │  ├─ searxng.ts      # SearXNG HTTP client + response mapping
-│  ├─ fetch.ts        # fetch + Readability + Turndown + SSRF guard
-│  ├─ format.ts       # Markdown rendering helpers
-│  └─ config.ts       # env parsing + defaults
+│  ├─ http.ts         # HttpResponseLike / FetchLike / readCapped
+│  ├─ ssrf.ts         # IP classification + guarded undici dispatcher
+│  ├─ fetch.ts        # fetch + Readability + Turndown + truncation
+│  ├─ format.ts       # Markdown rendering helpers (untrusted wrapping)
+│  ├─ config.ts       # env parsing + defaults
+│  └─ version.ts      # VERSION constant
 ├─ test/
 │  ├─ searxng.test.ts
 │  ├─ fetch.test.ts
@@ -100,7 +103,11 @@ Reads and validates environment variables, applying defaults:
 | `ALLOW_PRIVATE_HOSTS` | `false` | If true, disables the SSRF private-host guard |
 
 Config is a pure function `loadConfig(env)` returning a typed object, so it is
-trivially testable.
+trivially testable. Numeric env values must be `>= 1`; `0`, negative, blank, or
+non-numeric values fall back to the default. `SEARXNG_URL` is parsed with
+`new URL`; non-http(s) or malformed values fall back to the default, and any
+embedded credentials are stripped (basic auth uses `SEARXNG_USERNAME` /
+`SEARXNG_PASSWORD`).
 
 ### 4.2 `searxng.ts`
 
@@ -121,35 +128,49 @@ trivially testable.
   - `results[]`: `{ title, url, content, engine, engines[], category, score,
     publishedDate? }` (raw dicts contain many more fields via `as_dict()`; we
     project only what we use)
-  - also surface `answers[]`, `infoboxes[]`, `suggestions[]`,
-    `unresponsive_engines[]`
+  - `answers[]`: upstream emits **objects** (`Answer.as_dict()`), e.g.
+    `{ answer, url?, engine? }` — NOT plain strings.
+  - `unresponsive_engines[]`: upstream emits **`[engine, message]` tuples**
+    (`webutils.get_translated_errors`), NOT engine-name strings.
+  - `corrections[]`: `string[]` (surfaced).
+  - `suggestions[]`: `string[]`; `infoboxes[]`: bounded dictionaries.
+- Output is bounded: each result `content` is truncated, and the counts of
+  `answers` / `suggestions` / `infoboxes` are capped. The response body is read
+  with a byte cap (`MAX_RESPONSE_BYTES`).
 - Error handling:
   - non-2xx → typed `SearxngError` with a hint.
     - `403` → "JSON format is likely disabled in SearXNG settings.yml
       (`search.formats`)".
     - `400` → invalid parameter (e.g. bad `time_range`/`language`/`safesearch`).
-  - network/timeout → actionable message including the configured `SEARXNG_URL`.
+  - network/timeout → actionable message that includes only the **sanitized
+    origin** of `SEARXNG_URL` (never embedded credentials).
 
 ### 4.3 `fetch.ts`
 
-- `fetchContent(url, opts, config)`:
-  1. Parse and validate URL (only `http:` / `https:`).
-  2. **SSRF guard**: resolve the hostname and reject loopback, private,
-     link-local, unique-local, and cloud metadata addresses
-     (e.g. `169.254.169.254`, `::1`, `10/8`, `172.16/12`, `192.168/16`,
-     `127/8`, `fc00::/7`, `fe80::/10`) unless `ALLOW_PRIVATE_HOSTS=true`.
-     Also reject non-standard schemes and credentials-in-URL.
-     To limit DNS rebinding, do not rely on `fetch` resolving on its own: use an
-     `undici.Agent` with a custom `lookup`/`connect` hook that validates the
-     resolved address and pins the IP, pass it via fetch's `dispatcher` option,
-     and use `redirect: 'manual'` so every hop is re-validated. (Plain `fetch`
-     cannot pin IP + SNI by itself.)
-  3. Fetch with timeout, manual redirect handling (max 5 hops), and a byte cap
-     enforced while streaming the body.
-  4. Extract main content with `@mozilla/readability` (parsed via `linkedom`).
-  5. Convert the readable HTML to Markdown with `turndown`.
-  6. Fall back to stripped plain text if Readability yields nothing.
-  7. Truncate to `MAX_CHARS`, appending a `[truncated]` marker.
+- `fetchContent(config, url, opts)`:
+  1. Parse and validate URL (only `http:` / `https:`; no credentials-in-URL).
+  2. **SSRF guard** (`ssrf.ts`): classify resolved addresses with a
+     `node:net` `BlockList` (numeric, fail closed). Covers at least —
+     IPv4: `0/8`, `10/8`, `100.64/10` (CGNAT), `127/8`, `169.254/16`
+     (link-local + metadata), `172.16/12`, `192.0.0/24`, `192.0.2/24`,
+     `192.168/16`, `198.18/15`, `198.51.100/24`, `203.0.113/24`, `224/4`,
+     `240/4`; IPv6: `::`, `::1`, `::ffff:0:0/96` (IPv4-mapped), `::/96`
+     (IPv4-compatible), `64:ff9b::/96` (NAT64), `100::/64`, `2001:db8::/32`,
+     `2002::/16`, `fc00::/7`, `fe80::/10`, `fec0::/10`, `ff00::/8`.
+     Numeric classification is required because `new URL()` canonicalizes
+     `http://[::ffff:127.0.0.1]/` to `[::ffff:7f00:1]`; string-prefix checks
+     miss it. Zone IDs (`%…`) and brackets are normalized first.
+  3. **DNS-rebinding protection:** one guarded `lookup` is shared by
+     pre-validation and the connect hook. `fetch` and `Agent` are imported from
+     the installed `undici` package (single version) so the custom `lookup` is
+     honored; `redirect: 'manual'`; every hop re-validated; an `https → http`
+     downgrade on redirect is rejected; max 5 hops.
+  4. Fetch with timeout and a streaming byte cap (`MAX_RESPONSE_BYTES`).
+  5. Extract main content with `@mozilla/readability` (parsed via `linkedom`).
+  6. Convert the readable HTML to Markdown with `turndown`.
+  7. Fall back to block-separated plain text if Readability yields nothing.
+  8. Truncate to `MAX_CHARS` so the returned string (including the marker)
+     never exceeds the cap.
 - Returns `{ url, finalUrl, title?, byline?, content, truncated }`.
 
 ### 4.4 `format.ts`
@@ -158,6 +179,11 @@ Pure helpers producing Markdown for tool `content[].text`:
 - `formatSearchResults(response)` → numbered list with title, URL, snippet, engine.
 - `formatFetchedPage(result)` → title, source URL, then body.
 
+Both wrap attacker-controlled web content in explicit
+`<<<UNTRUSTED_WEB_CONTENT … UNTRUSTED_WEB_CONTENT>>>` delimiters preceded by a
+warning line, so the model treats it as data, never as instructions
+(prompt-injection mitigation). Tool descriptions state the same.
+
 ### 4.5 `tools.ts` / `index.ts`
 
 - `createServer(config)` builds an `McpServer` and registers the two tools.
@@ -165,6 +191,9 @@ Pure helpers producing Markdown for tool `content[].text`:
   (`await server.connect(new StdioServerTransport())`) and logs to **stderr**
   only (stdout is reserved for JSON-RPC). The `serveStdio(createServer)` helper
   from the SDK's getting-started guide is an acceptable alternative.
+- The self-execution guard compares `realpathSync(process.argv[1])` with
+  `fileURLToPath(import.meta.url)` so the published bin works through
+  npm/pnpm symlinks. stderr logging never includes credentials.
 
 ## 5. Tool contracts
 
@@ -183,10 +212,16 @@ Input schema (zod):
 | `safesearch` | `0 \| 1 \| 2` | no | 0 off, 1 moderate, 2 strict |
 | `max_results` | number | no | 1–50, default 10 (client-side slice of one page) |
 
-- `outputSchema`: normalized `SearchResponse` (structured content).
+- `outputSchema`: normalized `SearchResponse` (structured content):
+  `answers` is `{ answer: string; url?: string; engine?: string }[]`,
+  `unresponsiveEngines` is `[engine, message][]`, `corrections` is `string[]`,
+  and `infoboxes` is bounded in count and shape.
+- Output is bounded: per-result `content` is truncated and array counts
+  (`answers`, `suggestions`, `infoboxes`) are capped; the SearXNG response body
+  is read with a byte cap.
 - `max_results` only slices the current `pageno` page; requesting more results
   than the page size does not trigger additional page fetches in v1.
-- `content`: the same data rendered as Markdown.
+- `content`: the same data rendered as Markdown (untrusted content delimited).
 - Annotations: `readOnlyHint: true`, `openWorldHint: true`.
 
 ### 5.2 `fetch_content`
@@ -195,12 +230,12 @@ Input schema (zod):
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `url` | string (url) | yes | http/https only |
+| `url` | string | yes | validated at runtime: http/https, no credentials, public host |
 | `max_chars` | number | no | overrides `MAX_CHARS` (1000–200000) |
 | `timeout_ms` | number | no | overrides `FETCH_TIMEOUT_MS` |
 
 - `outputSchema`: `{ url, finalUrl, title?, byline?, content, truncated }`.
-- `content`: Markdown (title + body).
+- `content`: Markdown (title + body); the web body is wrapped in untrusted-content delimiters.
 - Annotations: `readOnlyHint: true`, `openWorldHint: true`.
 
 Errors are returned as `{ content:[{type:"text", text}], isError:true }` with
@@ -254,21 +289,37 @@ set `SEARXNG_SECRET` via the container environment.
 
 ## 7. Security
 
-- **SSRF protection** on `fetch_content` is mandatory and on by default.
-- No secrets are logged; env values are never echoed.
-- Bounded downloads (byte cap) and bounded outputs (`MAX_CHARS`).
+- **SSRF protection** on `fetch_content` is mandatory and on by default; the
+  blocklist is numeric (`node:net` `BlockList`) and fail-closed.
+- The resolved IP is pinned at connect time via a single guarded `undici`
+  `lookup` shared with pre-validation, and every redirect hop is re-validated;
+  `https → http` redirect downgrades are rejected.
+- No secrets are logged; `SEARXNG_URL` is sanitized to drop embedded
+  credentials, and error/log messages never include them.
+- Bounded downloads (byte cap) and bounded outputs (`MAX_CHARS`; capped result
+  content and array counts for `search`).
 - Only `http`/`https` schemes; no `file:`, `data:`, `gopher:`.
+- **Prompt-injection mitigation:** web content returned by both tools is wrapped
+  in explicit untrusted-content delimiters with a warning; tool descriptions
+  state that returned content is untrusted data.
 - The SearXNG instance is assumed local/trusted; the MCP does not expose it
   publicly.
 
 ## 8. Testing strategy
 
 - **Unit (vitest)**:
-  - `searxng.test.ts`: query-string construction, response mapping, 403 hint,
-    timeout handling (mocked `fetch`).
-  - `fetch.test.ts`: SSRF guard (loopback/private/metadata rejected), HTML→MD
-    extraction, truncation, fallback path, byte cap.
-  - `tools.test.ts`: zod schema validation (boundary values), Markdown render.
+  - `searxng.test.ts`: query-string construction, response mapping
+    (`answers` objects, `unresponsive_engines` tuples, `corrections`), 403 hint,
+    timeout handling (mocked `fetch`), bounded output.
+  - `ssrf.test.ts`: numeric IP classification incl. IPv4-mapped IPv6
+    (`[::ffff:127.0.0.1]` after `new URL()` normalization), `fe80::/10`,
+    `fec0::/10`, NAT64, reserved IPv4 ranges; `assertUrlAllowed` through URL
+    normalization; guarded `lookup` `all:true` branch.
+  - `fetch.test.ts`: SSRF guard, HTML→MD extraction, block-separated fallback,
+    hard truncation cap, byte cap, redirect re-validation + `https→http`
+    rejection, rebinding (injected lookup) blocked at connect.
+  - `tools.test.ts`: zod schema validation, Markdown render, untrusted-content
+    wrapping, secret non-leakage.
 - **Manual/integration**:
   - `npx @modelcontextprotocol/inspector node dist/index.js` with a live
     SearXNG container.
@@ -279,9 +330,11 @@ set `SEARXNG_SECRET` via the container environment.
 GitHub Actions on push/PR:
 1. `pnpm install --frozen-lockfile`
 2. `pnpm run lint`
-3. `pnpm run typecheck`
-4. `pnpm test`
-5. `pnpm run build`
+3. `pnpm run lint:types`
+4. `pnpm run format:check`
+5. `pnpm run typecheck`
+6. `pnpm test`
+7. `pnpm run build`
 
 Matrix: Node 22, 24, 26 (Node 20 reached EOL on 2026-04-30; 24 is Active LTS,
 26 is Current/LTS from 2026-10).
@@ -294,7 +347,7 @@ Matrix: Node 22, 24, 26 (Node 20 reached EOL on 2026-04-30; 24 is Active LTS,
 | Language | TypeScript 7.x, strict (native/Go compiler; no programmatic API — see lint note) |
 | MCP SDK | `@modelcontextprotocol/server` v2; `McpServer` from the root, `StdioServerTransport` from `/stdio` (or `serveStdio`) |
 | Validation | `zod` v4 (`import { z } from "zod"`; `zod/v4` subpath also available) |
-| HTTP | native `fetch` + explicit `undici` dep (custom `Agent`/`dispatcher` for IP pinning + `redirect: 'manual'`) |
+| HTTP | `fetch` + `Agent` both imported from the installed `undici` (single version) so the guarded `lookup` is honored; `redirect: 'manual'` |
 | HTML parse | `linkedom` |
 | Extraction | `@mozilla/readability` |
 | HTML→MD | `turndown` (+ `@types/turndown`) |
@@ -329,8 +382,10 @@ Installed project-scoped (official Anthropic skills) into `.agents/skills/`:
 - `pnpm test` and `pnpm build` pass in CI.
 - From OpenCode, `search` returns relevant results and `fetch_content` returns
   clean Markdown for a known page.
-- SSRF guard rejects `http://localhost` and `http://169.254.169.254`.
-- README explains setup end-to-end.
+- SSRF guard rejects `http://localhost`, `http://169.254.169.254`, and the
+  URL-normalized IPv4-mapped form `http://[::ffff:169.254.169.254]`.
+- README explains setup end-to-end (MCP env is provided by the client; `.env`
+  is used only by Docker Compose for `SEARXNG_SECRET`).
 
 ## 13. Decisions log
 

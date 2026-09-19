@@ -41,10 +41,11 @@ describe('mapSearchResponse', () => {
       { title: 'B', url: 'https://b.test', content: 'b', engines: ['brave', 7], category: 'news' },
       { title: 'C', url: 'https://c.test', content: 'c', publishedDate: '2026-01-02' },
     ],
-    answers: ['42'],
+    answers: [{ answer: '42', url: 'https://a.test' }],
+    corrections: ['kagi'],
     infoboxes: [{ id: 'x' }],
     suggestions: ['cats rule'],
-    unresponsive_engines: ['kagi'],
+    unresponsive_engines: [['kagi', 'timeout']],
   };
 
   it('projects and caps results', () => {
@@ -69,10 +70,63 @@ describe('mapSearchResponse', () => {
 
   it('maps answers, suggestions and unresponsive engines', () => {
     const res = mapSearchResponse(raw, 10);
-    expect(res.answers).toEqual(['42']);
+    expect(res.answers).toEqual([{ answer: '42', url: 'https://a.test' }]);
     expect(res.suggestions).toEqual(['cats rule']);
-    expect(res.unresponsiveEngines).toEqual(['kagi']);
+    expect(res.unresponsiveEngines).toEqual([['kagi', 'timeout']]);
+    expect(res.corrections).toEqual(['kagi']);
     expect(res.infoboxes).toHaveLength(1);
+  });
+
+  it('projects string and object answers, dropping unusable ones', () => {
+    const res = mapSearchResponse(
+      {
+        answers: [
+          'plain',
+          { content: 'from content', engine: 'google' },
+          { answer: 'named', url: 'https://a.test' },
+          { nope: true },
+          null,
+        ],
+      },
+      10,
+    );
+    expect(res.answers).toEqual([
+      { answer: 'plain' },
+      { answer: 'from content', engine: 'google' },
+      { answer: 'named', url: 'https://a.test' },
+    ]);
+  });
+
+  it('projects unresponsive engines as [engine, message] tuples', () => {
+    const res = mapSearchResponse(
+      { unresponsive_engines: [['kagi', 'timeout'], ['brave'], 'google', 7, []] },
+      10,
+    );
+    expect(res.unresponsiveEngines).toEqual([
+      ['kagi', 'timeout'],
+      ['brave', ''],
+    ]);
+  });
+
+  it('caps array fields and truncates result content', () => {
+    const res = mapSearchResponse(
+      {
+        results: [{ title: 'big', url: 'https://big.test', content: 'x'.repeat(2000) }],
+        answers: Array.from({ length: 25 }, (_, i) => `a${i}`),
+        unresponsive_engines: Array.from({ length: 25 }, (_, i) => [`e${i}`, 'timeout']),
+        corrections: Array.from({ length: 25 }, (_, i) => `c${i}`),
+        suggestions: Array.from({ length: 25 }, (_, i) => `s${i}`),
+        infoboxes: Array.from({ length: 25 }, (_, i) => ({ id: i })),
+      },
+      10,
+    );
+    expect(res.answers).toHaveLength(20);
+    expect(res.unresponsiveEngines).toHaveLength(20);
+    expect(res.corrections).toHaveLength(20);
+    expect(res.suggestions).toHaveLength(20);
+    expect(res.infoboxes).toHaveLength(20);
+    expect(res.results[0]?.content).toHaveLength(1001);
+    expect(res.results[0]?.content.endsWith('…')).toBe(true);
   });
 
   it('is defensive about malformed input', () => {
@@ -81,6 +135,7 @@ describe('mapSearchResponse', () => {
       query: '',
       results: [],
       answers: [],
+      corrections: [],
       infoboxes: [],
       suggestions: [],
       unresponsiveEngines: [],

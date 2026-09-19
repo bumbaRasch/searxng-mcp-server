@@ -4,6 +4,7 @@
   "description": "MCP server for a self-hosted SearXNG instance: web search and page fetch, no API keys.",
   "type": "module",
   "license": "MIT",
+  "packageManager": "pnpm@10.34.5",
   "engines": {
     "node": ">=22.19.0"
   },
@@ -18,6 +19,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "pnpm build",
     "lint": "oxlint",
     "lint:types": "oxlint --type-aware",
     "format": "prettier --write .",

@@ -20,13 +20,20 @@ export interface SearchResult {
   publishedDate?: string;
 }
 
+export interface SearchAnswer {
+  answer: string;
+  url?: string;
+  engine?: string;
+}
+
 export interface SearchResponse {
   query: string;
   results: SearchResult[];
-  answers: string[];
+  answers: SearchAnswer[];
+  corrections: string[];
   infoboxes: unknown[];
   suggestions: string[];
-  unresponsiveEngines: string[];
+  unresponsiveEngines: [string, string][];
 }
 
 export interface FetchResult {

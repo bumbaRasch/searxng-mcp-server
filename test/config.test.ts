@@ -51,4 +51,19 @@ describe('loadConfig', () => {
     expect(loadConfig({ SEARXNG_URL: '/' }).searxngUrl).toBe('http://localhost:8888');
     expect(loadConfig({ USER_AGENT: '' }).userAgent).toBe('searxng-mcp-ts/0.0.0');
   });
+
+  it('treats 0 as invalid for positive numeric values', () => {
+    expect(loadConfig({ MAX_CHARS: '0' }).maxChars).toBe(25_000);
+    expect(loadConfig({ SEARXNG_TIMEOUT_MS: '0' }).searxngTimeoutMs).toBe(10_000);
+  });
+
+  it('sanitizes credentials and non-http(s) schemes out of SEARXNG_URL', () => {
+    expect(loadConfig({ SEARXNG_URL: 'http://u:p@searx.test:8888' }).searxngUrl).toBe(
+      'http://searx.test:8888',
+    );
+    expect(loadConfig({ SEARXNG_URL: 'ftp://searx.test' }).searxngUrl).toBe(
+      'http://localhost:8888',
+    );
+    expect(loadConfig({ SEARXNG_URL: 'not a url' }).searxngUrl).toBe('http://localhost:8888');
+  });
 });

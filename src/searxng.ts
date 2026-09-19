@@ -1,5 +1,8 @@
 import { URLSearchParams } from 'node:url';
-import type { SearchParams, SearchResponse, SearchResult } from './types.js';
+import type { SearchAnswer, SearchParams, SearchResponse, SearchResult } from './types.js';
+
+const MAX_RESULT_CONTENT_CHARS = 1000;
+const MAX_ARRAY_ITEMS = 20;
 
 export class SearxngError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
@@ -42,12 +45,43 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+function truncateText(text: string, max: number): string {
+  return text.length <= max ? text : `${text.slice(0, max)}…`;
+}
+
+function projectAnswer(value: unknown): SearchAnswer | null {
+  if (typeof value === 'string') return { answer: value };
+  if (!isRecord(value)) return null;
+  const answer =
+    typeof value.answer === 'string'
+      ? value.answer
+      : typeof value.content === 'string'
+        ? value.content
+        : null;
+  if (answer === null) return null;
+  const out: SearchAnswer = { answer };
+  if (typeof value.url === 'string') out.url = value.url;
+  if (typeof value.engine === 'string') out.engine = value.engine;
+  return out;
+}
+
+function projectUnresponsive(value: unknown): [string, string] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const engine = value[0];
+  if (typeof engine !== 'string') return null;
+  const message = typeof value[1] === 'string' ? value[1] : String(value[1] ?? '');
+  return [engine, message];
+}
+
 function projectResult(value: unknown): SearchResult {
   const raw: RawResult = isRecord(value) ? value : {};
   const result: SearchResult = {
     title: typeof raw.title === 'string' ? raw.title : '',
     url: typeof raw.url === 'string' ? raw.url : '',
-    content: typeof raw.content === 'string' ? raw.content : '',
+    content: truncateText(
+      typeof raw.content === 'string' ? raw.content : '',
+      MAX_RESULT_CONTENT_CHARS,
+    ),
   };
   if (typeof raw.engine === 'string') result.engine = raw.engine;
   if (Array.isArray(raw.engines)) result.engines = asStringArray(raw.engines);
@@ -60,12 +94,23 @@ function projectResult(value: unknown): SearchResult {
 export function mapSearchResponse(raw: unknown, maxResults: number): SearchResponse {
   const data = isRecord(raw) ? raw : {};
   const rawResults: unknown[] = Array.isArray(data.results) ? data.results : [];
+  const answers = (Array.isArray(data.answers) ? data.answers : [])
+    .map(projectAnswer)
+    .filter((item): item is SearchAnswer => item !== null)
+    .slice(0, MAX_ARRAY_ITEMS);
+  const unresponsiveEngines = (
+    Array.isArray(data.unresponsive_engines) ? data.unresponsive_engines : []
+  )
+    .map(projectUnresponsive)
+    .filter((item): item is [string, string] => item !== null)
+    .slice(0, MAX_ARRAY_ITEMS);
   return {
     query: typeof data.query === 'string' ? data.query : '',
     results: rawResults.slice(0, Math.max(0, maxResults)).map(projectResult),
-    answers: asStringArray(data.answers),
-    infoboxes: Array.isArray(data.infoboxes) ? data.infoboxes : [],
-    suggestions: asStringArray(data.suggestions),
-    unresponsiveEngines: asStringArray(data.unresponsive_engines),
+    answers,
+    corrections: asStringArray(data.corrections).slice(0, MAX_ARRAY_ITEMS),
+    infoboxes: (Array.isArray(data.infoboxes) ? data.infoboxes : []).slice(0, MAX_ARRAY_ITEMS),
+    suggestions: asStringArray(data.suggestions).slice(0, MAX_ARRAY_ITEMS),
+    unresponsiveEngines,
   };
 }

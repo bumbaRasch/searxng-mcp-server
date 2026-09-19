@@ -5,10 +5,7 @@
     "correctness": "error",
     "suspicious": "warn"
   },
-  "options": {
-    "typeAware": false
-  },
-  "ignorePatterns": ["dist", "node_modules", ".agents", "coverage"],
+  "ignorePatterns": ["dist", "node_modules", ".agents", "coverage", ".superpowers", "docs"],
   "overrides": [
     {
       "files": ["test/**/*.ts"],
