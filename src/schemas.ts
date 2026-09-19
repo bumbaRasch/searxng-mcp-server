@@ -10,30 +10,39 @@ export const DEFAULT_MAX_RESULTS = 10;
 /** Projection bound for infobox urls; also caps how many are rendered. */
 export const MAX_URLS_PER_INFOBOX = 10;
 
+// Shared argument fields, reused by every search-like input schema so the
+// three inputs can never drift apart.
+const queryArg = z.string().min(1).max(500).describe('The search query.');
+const enginesArg = z
+  .array(z.string().min(1))
+  .optional()
+  .describe('Restrict to specific SearXNG engines (best-effort).');
+const languageArg = z.string().min(2).optional().describe('Language code, e.g. "en", "de".');
+const pagenoArg = z.number().int().min(1).optional().describe('Page number (default 1).');
+const safesearchArg = z
+  .union([z.literal(0), z.literal(1), z.literal(2)])
+  .optional()
+  .describe('0 = off, 1 = moderate, 2 = strict.');
+const maxResultsArg = z
+  .number()
+  .int()
+  .min(1)
+  .max(50)
+  .default(DEFAULT_MAX_RESULTS)
+  .describe(`Maximum results to return (default ${DEFAULT_MAX_RESULTS}).`);
+
 export const searchInput = z.object({
-  query: z.string().min(1).max(500).describe('The search query.'),
+  query: queryArg,
   categories: z
     .array(z.string().min(1))
     .optional()
     .describe('SearXNG categories, e.g. ["general"], ["news"]. Unknown values are ignored.'),
-  engines: z
-    .array(z.string().min(1))
-    .optional()
-    .describe('Restrict to specific SearXNG engines (best-effort).'),
-  language: z.string().min(2).optional().describe('Language code, e.g. "en", "de".'),
+  engines: enginesArg,
+  language: languageArg,
   time_range: timeRange.optional().describe('Restrict results by time.'),
-  pageno: z.number().int().min(1).optional().describe('Page number (default 1).'),
-  safesearch: z
-    .union([z.literal(0), z.literal(1), z.literal(2)])
-    .optional()
-    .describe('0 = off, 1 = moderate, 2 = strict.'),
-  max_results: z
-    .number()
-    .int()
-    .min(1)
-    .max(50)
-    .default(DEFAULT_MAX_RESULTS)
-    .describe(`Maximum results to return (default ${DEFAULT_MAX_RESULTS}).`),
+  pageno: pagenoArg,
+  safesearch: safesearchArg,
+  max_results: maxResultsArg,
 });
 export type SearchInput = z.infer<typeof searchInput>;
 
@@ -71,6 +80,64 @@ export type SearchResponse = z.infer<typeof searchOutput>;
 export type SearchResult = z.infer<(typeof searchOutput.shape)['results']['element']>;
 export type SearchAnswer = z.infer<(typeof searchOutput.shape)['answers']['element']>;
 export type SearchInfobox = z.infer<(typeof searchOutput.shape)['infoboxes']['element']>;
+
+export const imageSearchInput = z.object({
+  query: queryArg,
+  engines: enginesArg,
+  language: languageArg,
+  pageno: pagenoArg,
+  safesearch: safesearchArg,
+  max_results: maxResultsArg,
+});
+export type ImageSearchInput = z.infer<typeof imageSearchInput>;
+
+export const newsSearchInput = z.object({
+  query: queryArg,
+  engines: enginesArg,
+  language: languageArg,
+  time_range: timeRange.optional().describe('Restrict results by time.'),
+  pageno: pagenoArg,
+  safesearch: safesearchArg,
+  max_results: maxResultsArg,
+});
+export type NewsSearchInput = z.infer<typeof newsSearchInput>;
+
+export const imageSearchOutput = z.object({
+  query: z.string(),
+  results: z.array(
+    z.object({
+      title: z.string(),
+      url: z.string(),
+      imgSrc: z.string(),
+      thumbnailSrc: z.string().optional(),
+      resolution: z.string().optional(),
+      imgFormat: z.string().optional(),
+      source: z.string().optional(),
+      engines: z.array(z.string()).optional(),
+    }),
+  ),
+  suggestions: z.array(z.string()),
+  unresponsiveEngines: z.array(z.tuple([z.string(), z.string()])),
+});
+export type ImageSearchResponse = z.infer<typeof imageSearchOutput>;
+export type ImageSearchResult = z.infer<(typeof imageSearchOutput.shape)['results']['element']>;
+
+export const newsSearchOutput = z.object({
+  query: z.string(),
+  results: z.array(
+    z.object({
+      title: z.string(),
+      url: z.string(),
+      content: z.string(),
+      publishedDate: z.string().optional(),
+      engines: z.array(z.string()).optional(),
+    }),
+  ),
+  suggestions: z.array(z.string()),
+  unresponsiveEngines: z.array(z.tuple([z.string(), z.string()])),
+});
+export type NewsSearchResponse = z.infer<typeof newsSearchOutput>;
+export type NewsSearchResult = z.infer<(typeof newsSearchOutput.shape)['results']['element']>;
 
 export const fetchInput = z.object({
   url: z.string().min(1).max(2048).describe('The absolute http/https URL to fetch.'),
@@ -116,16 +183,39 @@ export interface SearchParams {
   maxResults?: number;
 }
 
-/** Single mapping site from MCP tool arguments to internal search params. */
-export function toSearchParams(input: SearchInput): SearchParams {
+interface CommonSearchArgs {
+  query: string;
+  engines?: string[];
+  language?: string;
+  pageno?: number;
+  safesearch?: Safesearch;
+  max_results: number;
+}
+
+function mapCommonParams(input: CommonSearchArgs): SearchParams {
   return {
     query: input.query,
-    categories: input.categories,
     engines: input.engines,
     language: input.language,
-    timeRange: input.time_range,
     pageno: input.pageno,
     safesearch: input.safesearch,
     maxResults: input.max_results ?? DEFAULT_MAX_RESULTS,
   };
+}
+
+/** Single mapping site from MCP tool arguments to internal search params. */
+export function toSearchParams(input: SearchInput): SearchParams {
+  return {
+    ...mapCommonParams(input),
+    categories: input.categories,
+    timeRange: input.time_range,
+  };
+}
+
+export function toImageSearchParams(input: ImageSearchInput): SearchParams {
+  return { ...mapCommonParams(input), categories: ['images'] };
+}
+
+export function toNewsSearchParams(input: NewsSearchInput): SearchParams {
+  return { ...mapCommonParams(input), categories: ['news'], timeRange: input.time_range };
 }
