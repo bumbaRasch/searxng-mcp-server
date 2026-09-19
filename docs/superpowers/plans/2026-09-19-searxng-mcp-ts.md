@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Node `>=22`. ESM only (`"type": "module"`); relative imports MUST end in `.js`.
+- Node `>=22.19.0` (so `undici@8` installs/runs). ESM only (`"type": "module"`); relative imports MUST end in `.js`.
 - TypeScript `^7.0.2` (native/Go compiler). TypeScript 7 has no programmatic compiler API until 7.1, so `typescript-eslint` cannot be used. Lint with **Oxlint** instead.
 - Linting uses **Oxlint** (`oxlint`); type-aware rules via `oxlint --type-aware`, backed by `oxlint-tsgolint`. Formatting uses Prettier. Do NOT add ESLint or `typescript-eslint`.
 - pnpm 10 for installs. Commit `pnpm-lock.yaml`.
@@ -63,7 +63,7 @@
   "description": "MCP server for a self-hosted SearXNG instance: web search and page fetch, no API keys.",
   "type": "module",
   "license": "MIT",
-  "engines": { "node": ">=22" },
+  "engines": { "node": ">=22.19.0" },
   "bin": { "searxng-mcp-ts": "dist/index.js" },
   "files": ["dist", "README.md", "LICENSE"],
   "scripts": {
@@ -175,6 +175,7 @@ node_modules
 pnpm-lock.yaml
 .agents
 docs
+.superpowers
 ```
 
 `vitest.config.ts`:

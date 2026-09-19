@@ -290,7 +290,7 @@ Matrix: Node 22, 24, 26 (Node 20 reached EOL on 2026-04-30; 24 is Active LTS,
 
 | Concern | Choice |
 | --- | --- |
-| Runtime | Node ≥ 22, ESM |
+| Runtime | Node ≥ 22.19.0, ESM |
 | Language | TypeScript 7.x, strict (native/Go compiler; no programmatic API — see lint note) |
 | MCP SDK | `@modelcontextprotocol/server` v2; `McpServer` from the root, `StdioServerTransport` from `/stdio` (or `serveStdio`) |
 | Validation | `zod` v4 (`import { z } from "zod"`; `zod/v4` subpath also available) |
