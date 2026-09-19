@@ -1,9 +1,22 @@
-import { Agent } from 'undici';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { Agent, fetch as undiciFetch } from 'undici';
 import { describe, expect, it } from 'vitest';
 import { createGuardedDispatcher, createGuardedLookup } from '../src/ssrf.js';
 
 type Lookup = ReturnType<typeof createGuardedLookup>;
 type CbResult = { err: Error | null; address?: string; family?: number };
+
+async function withServer<T>(run: (port: number) => Promise<T>): Promise<T> {
+  const server = createServer((_req, res) => res.end('ok'));
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as AddressInfo;
+  try {
+    return await run(port);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
 
 function callLookup(
   lookup: Lookup,
@@ -111,5 +124,34 @@ describe('createGuardedDispatcher', () => {
       lookup: async () => [{ address: '8.8.8.8', family: 4 }],
     });
     expect(dispatcher).toBeInstanceOf(Agent);
+  });
+
+  it('blocks a hostname resolving to a private address through the dispatcher', async () => {
+    await withServer(async (port) => {
+      const dispatcher = createGuardedDispatcher({
+        allowPrivateHosts: false,
+        lookup: async () => [{ address: '127.0.0.1', family: 4 }],
+      });
+      try {
+        await expect(undiciFetch(`http://rebind.test:${port}/`, { dispatcher })).rejects.toThrow();
+      } finally {
+        await dispatcher.close();
+      }
+    });
+  });
+
+  it('allows it when allowPrivateHosts is true', async () => {
+    await withServer(async (port) => {
+      const dispatcher = createGuardedDispatcher({
+        allowPrivateHosts: true,
+        lookup: async () => [{ address: '127.0.0.1', family: 4 }],
+      });
+      try {
+        const response = await undiciFetch(`http://rebind.test:${port}/`, { dispatcher });
+        expect(response.status).toBe(200);
+      } finally {
+        await dispatcher.close();
+      }
+    });
   });
 });
