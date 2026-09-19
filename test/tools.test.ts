@@ -147,21 +147,20 @@ describe('handleFetch', () => {
 
 describe('handleImageSearch', () => {
   it('returns markdown and schema-valid structured content', async () => {
-    const fetchImpl: FetchLike = async () =>
-      jsonResponse({
-        query: 'cats',
-        results: [
-          {
-            title: 'Cat',
-            url: 'https://page.test/c',
-            img_src: 'https://img.test/c.png',
-            thumbnail_src: 'https://img.test/t.png',
-            resolution: '800×600',
-          },
-        ],
-      });
     const result = await handleImageSearch(config, imageSearchInput.parse({ query: 'cats' }), {
-      fetchImpl,
+      fetchImpl: async () =>
+        jsonResponse({
+          query: 'cats',
+          results: [
+            {
+              title: 'Cat',
+              url: 'https://page.test/c',
+              img_src: 'https://img.test/c.png',
+              thumbnail_src: 'https://img.test/t.png',
+              resolution: '800×600',
+            },
+          ],
+        }),
     });
     expect(result.isError).toBeUndefined();
     expect(result.content[0]?.text).toContain('Image: https://img.test/c.png');
