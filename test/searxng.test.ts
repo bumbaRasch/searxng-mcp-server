@@ -344,13 +344,13 @@ describe('mapImageResponse', () => {
         source: 'photo.test',
         engines: ['bing images', 'duckduckgo images'],
       },
-      { title: 'No image', url: 'https://page.test/b' }, // img_src отсутствует → результат отброшен
-      { title: 'Garbage', img_src: 123, url: 'https://page.test/c' }, // не-строка → отброшен
+      { title: 'No image', url: 'https://page.test/b' }, // no img_src -> result dropped
+      { title: 'Garbage', img_src: 123, url: 'https://page.test/c' }, // non-string img_src -> dropped
       {
         title: 'x'.repeat(600),
         url: 'https://page.test/d',
         img_src: 'https://img.test/d.png',
-        thumbnail: 'https://img.test/dt.png', // fallback: thumbnail вместо thumbnail_src
+        thumbnail: 'https://img.test/dt.png', // fallback: thumbnail when thumbnail_src is absent
       },
     ],
     suggestions: ['funny cats'],
