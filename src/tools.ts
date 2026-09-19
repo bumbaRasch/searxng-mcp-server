@@ -4,9 +4,11 @@ import { fetchContent } from './fetch.js';
 import {
   formatFetchedPage,
   formatImageResults,
+  formatMusicResults,
   formatNewsResults,
   formatSearchResults,
   formatToolError,
+  formatVideoResults,
 } from './format.js';
 import type { FetchLike } from './http.js';
 import {
@@ -14,17 +16,30 @@ import {
   fetchOutput,
   imageSearchInput,
   imageSearchOutput,
+  musicSearchInput,
+  musicSearchOutput,
   newsSearchInput,
   newsSearchOutput,
   searchInput,
   searchOutput,
   toSearchParams,
+  videoSearchInput,
+  videoSearchOutput,
   type FetchInput,
   type ImageSearchInput,
+  type MusicSearchInput,
   type NewsSearchInput,
   type SearchInput,
+  type VideoSearchInput,
 } from './schemas.js';
-import { SearxngError, imageSearch, newsSearch, search } from './searxng.js';
+import {
+  SearxngError,
+  imageSearch,
+  musicSearch,
+  newsSearch,
+  search,
+  videoSearch,
+} from './searxng.js';
 
 type ToolResult = {
   content: { type: 'text'; text: string }[];
@@ -132,6 +147,46 @@ export async function handleNewsSearch(
   }
 }
 
+export async function handleVideoSearch(
+  config: Config,
+  args: VideoSearchInput,
+  deps: ToolDeps = {},
+): Promise<ToolResult> {
+  try {
+    const response = await videoSearch(config, args, { fetchImpl: deps.fetchImpl });
+    return {
+      content: [{ type: 'text', text: formatVideoResults(response) }],
+      structuredContent: response,
+    };
+  } catch (error) {
+    const message =
+      error instanceof SearxngError
+        ? error.message
+        : `Video search failed: ${error instanceof Error ? error.message : String(error)}`;
+    return { content: [{ type: 'text', text: formatToolError(message) }], isError: true };
+  }
+}
+
+export async function handleMusicSearch(
+  config: Config,
+  args: MusicSearchInput,
+  deps: ToolDeps = {},
+): Promise<ToolResult> {
+  try {
+    const response = await musicSearch(config, args, { fetchImpl: deps.fetchImpl });
+    return {
+      content: [{ type: 'text', text: formatMusicResults(response) }],
+      structuredContent: response,
+    };
+  } catch (error) {
+    const message =
+      error instanceof SearxngError
+        ? error.message
+        : `Music search failed: ${error instanceof Error ? error.message : String(error)}`;
+    return { content: [{ type: 'text', text: formatToolError(message) }], isError: true };
+  }
+}
+
 export function registerTools(server: McpServer, config: Config, deps: ToolDeps = {}): void {
   server.registerTool(
     'search',
@@ -187,5 +242,33 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
       annotations: TOOL_ANNOTATIONS,
     },
     (args) => handleNewsSearch(config, args, deps),
+  );
+
+  server.registerTool(
+    'video_search',
+    {
+      title: 'Video search (SearXNG)',
+      description: withUntrustedSuffix(
+        'Search the web for videos. Returns page links, preview thumbnails, duration, author and publish date. Supports a time_range freshness filter.',
+      ),
+      inputSchema: videoSearchInput,
+      outputSchema: videoSearchOutput,
+      annotations: TOOL_ANNOTATIONS,
+    },
+    (args) => handleVideoSearch(config, args, deps),
+  );
+
+  server.registerTool(
+    'music_search',
+    {
+      title: 'Music search (SearXNG)',
+      description: withUntrustedSuffix(
+        'Search the web for music. Returns page links and, when available, direct audio file links (audioSrc).',
+      ),
+      inputSchema: musicSearchInput,
+      outputSchema: musicSearchOutput,
+      annotations: TOOL_ANNOTATIONS,
+    },
+    (args) => handleMusicSearch(config, args, deps),
   );
 }

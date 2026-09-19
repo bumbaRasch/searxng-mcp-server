@@ -92,7 +92,7 @@ async function rpc(
 }
 
 describe('createServer wiring', () => {
-  it('exposes all four tools with output schemas over MCP', async () => {
+  it('exposes all six tools with output schemas over MCP', async () => {
     const responses = await rpc([{ id: 2, method: 'tools/list' }]);
     const listing = responses.get(2);
     expect(listing?.tools?.map((tool) => tool.name)).toEqual([
@@ -100,6 +100,8 @@ describe('createServer wiring', () => {
       'fetch_content',
       'image_search',
       'news_search',
+      'video_search',
+      'music_search',
     ]);
     for (const tool of listing?.tools ?? []) {
       expect(tool.outputSchema).toBeDefined();

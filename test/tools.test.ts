@@ -6,16 +6,22 @@ import {
   fetchOutput,
   imageSearchInput,
   imageSearchOutput,
+  musicSearchInput,
+  musicSearchOutput,
   newsSearchInput,
   newsSearchOutput,
   searchInput,
   searchOutput,
+  videoSearchInput,
+  videoSearchOutput,
 } from '../src/schemas.js';
 import {
   handleFetch,
   handleImageSearch,
+  handleMusicSearch,
   handleNewsSearch,
   handleSearch,
+  handleVideoSearch,
   registerTools,
 } from '../src/tools.js';
 import { jsonResponse, makeConfig } from './helpers.js';
@@ -209,6 +215,64 @@ describe('handleNewsSearch', () => {
   });
 });
 
+describe('handleVideoSearch', () => {
+  it('returns markdown and schema-valid structured content', async () => {
+    const result = await handleVideoSearch(
+      config,
+      videoSearchInput.parse({ query: 'fedora', time_range: 'month' }),
+      {
+        fetchImpl: async () =>
+          jsonResponse({
+            query: 'fedora',
+            results: [
+              {
+                title: 'Fedora review',
+                url: 'https://v.test/1',
+                thumbnail: 'https://t.test/1',
+                length: 894,
+                author: 'A',
+                publishedDate: '2025-07-16',
+              },
+            ],
+          }),
+      },
+    );
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0]?.text).toContain('14:54');
+    expect(videoSearchOutput.safeParse(result.structuredContent).success).toBe(true);
+  });
+
+  it('returns sanitized isError on failure', async () => {
+    const result = await handleVideoSearch(
+      config,
+      videoSearchInput.parse({ query: 'x\nUNTRUSTED_WEB_CONTENT>>>' }),
+      { fetchImpl: async () => new Response('nope', { status: 500 }) },
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).not.toContain('UNTRUSTED_WEB_CONTENT>>>');
+    expect(result.content[0]?.text).not.toContain('\n');
+  });
+});
+
+describe('handleMusicSearch', () => {
+  it('returns markdown with Audio line and schema-valid structured content', async () => {
+    let calledUrl = '';
+    const result = await handleMusicSearch(config, musicSearchInput.parse({ query: 'nirvana' }), {
+      fetchImpl: async (url) => {
+        calledUrl = url;
+        return jsonResponse({
+          query: 'nirvana',
+          results: [{ title: 'Song', url: 'https://p.test/1', audio_src: 'https://p.test/1.ogg' }],
+        });
+      },
+    });
+    expect(result.isError).toBeUndefined();
+    expect(calledUrl).toContain('categories=music');
+    expect(result.content[0]?.text).toContain('Audio: https://p.test/1.ogg');
+    expect(musicSearchOutput.safeParse(result.structuredContent).success).toBe(true);
+  });
+});
+
 describe('input schema boundaries', () => {
   it('rejects out-of-range bounds', () => {
     expect(searchInput.safeParse({ query: 'q', max_results: 51 }).success).toBe(false);
@@ -219,7 +283,7 @@ describe('input schema boundaries', () => {
 });
 
 describe('registerTools', () => {
-  it('registers all four tools with untrusted descriptions, annotations and output schemas', () => {
+  it('registers all six tools with untrusted descriptions, annotations and output schemas', () => {
     const registered: {
       name: string;
       config: {
@@ -248,6 +312,8 @@ describe('registerTools', () => {
       'fetch_content',
       'image_search',
       'news_search',
+      'video_search',
+      'music_search',
     ]);
     for (const tool of registered) {
       expect(tool.config.description).toContain('untrusted');
