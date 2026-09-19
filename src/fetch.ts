@@ -22,12 +22,56 @@ function tightenListMarkers(markdown: string): string {
     .join('\n');
 }
 
+interface WalkNode {
+  nodeType: number;
+  textContent: string | null;
+  childNodes: ArrayLike<WalkNode>;
+  tagName?: string;
+}
+
+const BLOCK_TAGS = new Set([
+  'P',
+  'DIV',
+  'LI',
+  'H1',
+  'H2',
+  'H3',
+  'H4',
+  'H5',
+  'H6',
+  'SECTION',
+  'ARTICLE',
+  'TR',
+  'TD',
+  'TH',
+  'BLOCKQUOTE',
+  'PRE',
+  'UL',
+  'OL',
+  'TABLE',
+  'BR',
+]);
+
+function collectText(node: WalkNode, out: string[]): void {
+  for (const child of Array.from(node.childNodes)) {
+    if (child.nodeType === 3) {
+      out.push(child.textContent ?? '');
+    } else if (child.nodeType === 1) {
+      const isBlock = BLOCK_TAGS.has((child.tagName ?? '').toUpperCase());
+      if (isBlock) out.push('\n');
+      collectText(child, out);
+      if (isBlock) out.push('\n');
+    }
+  }
+}
+
 const TRUNCATION_MARKER = '\n\n[Content truncated]';
 
 export function extractArticle(
   html: string,
   _url: string,
 ): { title?: string; byline?: string; contentHtml?: string; textContent?: string } {
+  if (html.trim() === '') return {};
   const { document } = parseHTML(html);
   const reader = new Readability(document, { charThreshold: 0 });
   const article = reader.parse();
@@ -46,15 +90,14 @@ export function extractArticle(
 }
 
 export function stripToText(html: string): string {
+  if (html.trim() === '') return '';
   const { document } = parseHTML(html);
-  const blocks = Array.from(
-    document.querySelectorAll('p, div, li, h1, h2, h3, h4, h5, h6, section, article, tr, br'),
-  ) as Array<{ textContent: string | null }>;
-  const text =
-    blocks.length > 0
-      ? blocks.map((node) => node.textContent ?? '').join('\n')
-      : (document.body?.textContent ?? '');
-  return text
+  const body = document.body;
+  const root = body && body.childNodes.length > 0 ? body : (document.documentElement ?? body);
+  const out: string[] = [];
+  if (root) collectText(root, out);
+  return out
+    .join('')
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
@@ -65,9 +108,9 @@ export function toMarkdown(html: string): string {
 }
 
 export function truncate(text: string, maxChars: number): { content: string; truncated: boolean } {
-  if (text.length <= maxChars) return { content: text, truncated: false };
-  if (maxChars <= TRUNCATION_MARKER.length)
-    return { content: text.slice(0, maxChars), truncated: true };
-  const budget = maxChars - TRUNCATION_MARKER.length;
-  return { content: `${text.slice(0, budget)}${TRUNCATION_MARKER}`, truncated: true };
+  const limit = Math.max(0, Math.floor(maxChars));
+  if (text.length <= limit) return { content: text, truncated: false };
+  const budget = Math.max(0, limit - TRUNCATION_MARKER.length);
+  const suffix = TRUNCATION_MARKER.length <= limit ? TRUNCATION_MARKER : '';
+  return { content: `${text.slice(0, budget)}${suffix}`, truncated: true };
 }

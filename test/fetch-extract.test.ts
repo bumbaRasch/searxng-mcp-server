@@ -21,6 +21,10 @@ describe('extractArticle', () => {
   it('returns an empty object for empty HTML', () => {
     expect(extractArticle('<html><body></body></html>', 'https://blog.test/x')).toEqual({});
   });
+
+  it('returns an empty object for an empty string', () => {
+    expect(extractArticle('', 'https://x.test')).toEqual({});
+  });
 });
 
 describe('toMarkdown', () => {
@@ -32,20 +36,33 @@ describe('toMarkdown', () => {
     expect(md).toContain('[x](https://x.test)');
     expect(md).toContain('- a');
   });
+
+  it('leaves fenced code blocks untouched', () => {
+    const md = toMarkdown('<pre><code>-   keep</code></pre>');
+    expect(md).toContain('-   keep');
+  });
 });
 
 describe('stripToText', () => {
-  it('returns readable text without tags', () => {
-    const text = stripToText('<html><body><p>Alpha</p><p>Beta</p></body></html>');
+  const FLAT = '<html><body><p>Alpha</p><p>Beta</p></body></html>';
+
+  it('returns readable text without tags and separates flat siblings', () => {
+    const text = stripToText(FLAT);
     expect(text).toContain('Alpha');
     expect(text).toContain('Beta');
     expect(text).not.toContain('<p>');
+    expect(text).not.toContain('AlphaBeta');
   });
 
-  it('separates block elements instead of concatenating them', () => {
-    const text = stripToText('<html><body><p>Alpha</p><p>Beta</p></body></html>');
+  it('does not duplicate or concatenate nested blocks', () => {
+    const text = stripToText('<div><p>Alpha</p><p>Beta</p></div>');
     expect(text).not.toContain('AlphaBeta');
-    expect(text).toContain('Alpha');
+    expect(text.split('Alpha').length - 1).toBe(1);
+    expect(text.split('Beta').length - 1).toBe(1);
+  });
+
+  it('returns an empty string for empty input', () => {
+    expect(stripToText('')).toBe('');
   });
 });
 
@@ -66,6 +83,16 @@ describe('truncate', () => {
     const result = truncate('abcdefghij', 5);
     expect(result.truncated).toBe(true);
     expect(result.content.length).toBeLessThanOrEqual(5);
+  });
+
+  it('never exceeds a zero cap', () => {
+    const result = truncate('abcdefghij', 0);
+    expect(result.truncated).toBe(true);
+    expect(result.content.length).toBeLessThanOrEqual(0);
+  });
+
+  it('clamps a negative cap to zero', () => {
+    expect(truncate('abcdefghij', -5)).toEqual({ content: '', truncated: true });
   });
 
   it('never exceeds maxChars for a large string', () => {
