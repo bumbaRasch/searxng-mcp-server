@@ -573,7 +573,8 @@ const MAX_RESULT_CONTENT_CHARS = 1000;
 const MAX_ARRAY_ITEMS = 20;
 
 function truncateText(text: string, max: number): string {
-  return text.length <= max ? text : `${text.slice(0, max)}…`;
+  if (text.length <= max) return text;
+  return max <= 1 ? text.slice(0, max) : `${text.slice(0, max - 1)}…`;
 }
 
 function projectAnswer(value: unknown): SearchAnswer | null {
