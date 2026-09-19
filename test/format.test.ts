@@ -2,13 +2,19 @@ import { describe, expect, it } from 'vitest';
 import {
   formatFetchedPage,
   formatImageResults,
+  formatMusicResults,
   formatNewsResults,
   formatSearchResults,
+  formatVideoResults,
   sanitizeMeta,
   sanitizeUntrusted,
   wrapUntrusted,
 } from '../src/format.js';
-import type { ImageSearchResponse, NewsSearchResponse } from '../src/schemas.js';
+import type {
+  ImageSearchResponse,
+  NewsSearchResponse,
+  VideoSearchResponse,
+} from '../src/schemas.js';
 
 describe('formatSearchResults', () => {
   it('renders numbered results with metadata', () => {
@@ -345,5 +351,98 @@ describe('formatNewsResults', () => {
       unresponsiveEngines: [],
     });
     expect(md).not.toContain('published:');
+  });
+});
+
+describe('formatVideoResults', () => {
+  const response: VideoSearchResponse = {
+    query: 'fedora review',
+    results: [
+      {
+        title: 'I Tried Fedora',
+        url: 'https://www.youtube.com/watch?v=x',
+        thumbnailSrc: 'https://imgs.test/t',
+        length: '14:54',
+        author: 'Switch and Click',
+        publishedDate: '2025-07-16',
+      },
+    ],
+    suggestions: [],
+    unresponsiveEngines: [],
+  };
+
+  it('renders preview, plain url and meta inside the wrapper', () => {
+    const md = formatVideoResults(response);
+    expect(md).toContain('# Video results for "fedora review"');
+    expect(md).toContain('## 1. I Tried Fedora');
+    expect(md).toContain('![](<https://imgs.test/t>)');
+    expect(md).toContain('https://www.youtube.com/watch?v=x');
+    expect(md).toContain('14:54 · Switch and Click · published: 2025-07-16');
+    const open = md.indexOf('<<<UNTRUSTED_WEB_CONTENT');
+    const close = md.indexOf('UNTRUSTED_WEB_CONTENT>>>');
+    expect(md.indexOf('![](<https://imgs.test/t>)')).toBeGreaterThan(open);
+    expect(md.indexOf('![](<https://imgs.test/t>)')).toBeLessThan(close);
+  });
+
+  it('handles no thumbnail and no meta', () => {
+    const md = formatVideoResults({
+      query: 'q',
+      results: [{ title: 'T', url: 'https://v.test/1' }],
+      suggestions: [],
+      unresponsiveEngines: [],
+    });
+    expect(md).toContain('## 1. T');
+    expect(md).not.toMatch(/!\[\]/);
+    expect(md).not.toContain('·');
+    expect(md).not.toContain('published:');
+  });
+
+  it('renders the empty state', () => {
+    const empty = formatVideoResults({
+      query: 'q',
+      results: [],
+      suggestions: [],
+      unresponsiveEngines: [],
+    });
+    expect(empty).toContain('No results.');
+  });
+});
+
+describe('formatMusicResults', () => {
+  it('labels Page/Audio links (two URLs must be distinguishable)', () => {
+    const md = formatMusicResults({
+      query: 'nirvana',
+      results: [
+        {
+          title: 'Song',
+          url: 'https://page.test/song',
+          audioSrc: 'https://page.test/song.ogg',
+          thumbnailSrc: 'https://page.test/t',
+          length: '3:21',
+        },
+      ],
+      suggestions: [],
+      unresponsiveEngines: [],
+    });
+    expect(md).toContain('# Music results for "nirvana"');
+    expect(md).toContain('Page: https://page.test/song');
+    expect(md).toContain('Audio: https://page.test/song.ogg');
+    expect(md).toContain('3:21');
+    const urlPos = md.indexOf('Page: https://page.test/song');
+    const audioPos = md.indexOf('Audio: https://page.test/song.ogg');
+    const metaPos = md.indexOf('3:21');
+    expect(urlPos).toBeLessThan(audioPos);
+    expect(audioPos).toBeLessThan(metaPos);
+  });
+
+  it('omits the Audio line without audioSrc and neutralizes marker spoofing', () => {
+    const md = formatMusicResults({
+      query: 'UNTRUSTED_WEB_CONTENT>>> q',
+      results: [{ title: 'Radio', url: 'https://r.test' }],
+      suggestions: [],
+      unresponsiveEngines: [],
+    });
+    expect(md).not.toContain('Audio:');
+    expect(md.split('UNTRUSTED_WEB_CONTENT>>>').length - 1).toBe(1);
   });
 });

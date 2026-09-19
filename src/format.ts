@@ -2,8 +2,10 @@ import {
   MAX_URLS_PER_INFOBOX,
   type FetchResult,
   type ImageSearchResponse,
+  type MusicSearchResponse,
   type NewsSearchResponse,
   type SearchResponse,
+  type VideoSearchResponse,
 } from './schemas.js';
 
 const UNTRUSTED_WARNING =
@@ -154,6 +156,55 @@ export function formatNewsResults(response: NewsSearchResponse): string {
     if (result.engines && result.engines.length > 0)
       meta.push(`engines: ${sanitizeMeta(result.engines.join(', '))}`);
     if (meta.length > 0) body.push('', `_${meta.join(' · ')}_`);
+  });
+
+  if (response.suggestions.length > 0) {
+    body.push('', `Did you mean: ${response.suggestions.map(sanitizeMeta).join(', ')}`);
+  }
+
+  lines.push(wrapUntrusted(body.join('\n')));
+  return lines.join('\n').trim();
+}
+
+export function formatVideoResults(response: VideoSearchResponse): string {
+  const lines: string[] = [`# Video results for "${sanitizeMeta(response.query)}"`];
+  const body: string[] = [];
+  if (response.results.length === 0) body.push('No results.');
+
+  response.results.forEach((result, index) => {
+    body.push('', `## ${index + 1}. ${sanitizeMeta(result.title) || '(untitled)'}`);
+    if (result.thumbnailSrc) body.push(`![](<${sanitizeMeta(result.thumbnailSrc)}>)`);
+    if (result.url) body.push(sanitizeMeta(result.url));
+    const meta: string[] = [];
+    if (result.length) meta.push(sanitizeMeta(result.length));
+    if (result.author) meta.push(sanitizeMeta(result.author));
+    if (result.publishedDate) meta.push(`published: ${sanitizeMeta(result.publishedDate)}`);
+    if (meta.length > 0) body.push(`_${meta.join(' · ')}_`);
+  });
+
+  if (response.suggestions.length > 0) {
+    body.push('', `Did you mean: ${response.suggestions.map(sanitizeMeta).join(', ')}`);
+  }
+
+  lines.push(wrapUntrusted(body.join('\n')));
+  return lines.join('\n').trim();
+}
+
+export function formatMusicResults(response: MusicSearchResponse): string {
+  const lines: string[] = [`# Music results for "${sanitizeMeta(response.query)}"`];
+  const body: string[] = [];
+  if (response.results.length === 0) body.push('No results.');
+
+  response.results.forEach((result, index) => {
+    body.push('', `## ${index + 1}. ${sanitizeMeta(result.title) || '(untitled)'}`);
+    if (result.thumbnailSrc) body.push(`![](<${sanitizeMeta(result.thumbnailSrc)}>)`);
+    if (result.url) body.push(`Page: ${sanitizeMeta(result.url)}`);
+    if (result.audioSrc) body.push(`Audio: ${sanitizeMeta(result.audioSrc)}`);
+    const meta: string[] = [];
+    if (result.length) meta.push(sanitizeMeta(result.length));
+    if (result.author) meta.push(sanitizeMeta(result.author));
+    if (result.publishedDate) meta.push(`published: ${sanitizeMeta(result.publishedDate)}`);
+    if (meta.length > 0) body.push(`_${meta.join(' · ')}_`);
   });
 
   if (response.suggestions.length > 0) {
