@@ -131,7 +131,8 @@ function projectResult(value: unknown): SearchResult {
     ),
   };
   if (typeof raw.engine === 'string') result.engine = raw.engine;
-  if (Array.isArray(raw.engines)) result.engines = asStringArray(raw.engines);
+  if (Array.isArray(raw.engines))
+    result.engines = asStringArray(raw.engines).slice(0, MAX_ARRAY_ITEMS);
   if (typeof raw.category === 'string') result.category = raw.category;
   if (typeof raw.score === 'number') result.score = raw.score;
   if (typeof raw.publishedDate === 'string') result.publishedDate = raw.publishedDate;
@@ -276,7 +277,8 @@ function projectImageResult(value: unknown): ImageSearchResult | null {
     result.imgFormat = truncateText(value.img_format, MAX_MEDIA_FIELD_CHARS);
   if (typeof value.source === 'string')
     result.source = truncateText(value.source, MAX_SOURCE_CHARS);
-  if (Array.isArray(value.engines)) result.engines = asStringArray(value.engines);
+  if (Array.isArray(value.engines))
+    result.engines = asStringArray(value.engines).slice(0, MAX_ARRAY_ITEMS);
   return result;
 }
 
@@ -317,7 +319,8 @@ function projectNewsResult(value: unknown): NewsSearchResult {
     ),
   };
   if (typeof raw.publishedDate === 'string') result.publishedDate = raw.publishedDate;
-  if (Array.isArray(raw.engines)) result.engines = asStringArray(raw.engines);
+  if (Array.isArray(raw.engines))
+    result.engines = asStringArray(raw.engines).slice(0, MAX_ARRAY_ITEMS);
   return result;
 }
 

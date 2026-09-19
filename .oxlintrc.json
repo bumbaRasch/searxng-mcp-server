@@ -9,7 +9,12 @@
   "overrides": [
     {
       "files": ["test/**/*.ts"],
-      "env": { "vitest": true }
+      "env": {
+        "vitest": true
+      },
+      "rules": {
+        "typescript/no-unsafe-type-assertion": "off"
+      }
     }
   ]
 }

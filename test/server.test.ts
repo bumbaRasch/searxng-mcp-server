@@ -18,11 +18,11 @@ const INIT: JSONRPCMessage = {
     capabilities: {},
     clientInfo: { name: 'test-client', version: '0.0.0' },
   },
-} as JSONRPCMessage;
+} satisfies JSONRPCMessage;
 const INITIALIZED: JSONRPCMessage = {
   jsonrpc: '2.0',
   method: 'notifications/initialized',
-} as JSONRPCMessage;
+};
 
 /** Sends the handshake plus `requests`; resolves once every request id has a
  * result, or rejects on a JSON-RPC error response / timeout. */

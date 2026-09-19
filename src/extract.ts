@@ -82,7 +82,10 @@ export function cleanContentHtml(html: string, baseUrl: string): string {
     ? html
     : `<!doctype html><html><body>${html}</body></html>`;
   const { document } = parseHTML(source);
+  // linkedom's NodeList elements are structurally compatible but untyped for
+  // our minimal DOM seam; the cast is confined to this one accessor.
   const select = (selector: string): DomElement[] =>
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
     Array.from(document.querySelectorAll(selector)) as unknown as DomElement[];
   for (const element of select('script, style, noscript, template')) {
     element.remove();

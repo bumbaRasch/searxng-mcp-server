@@ -292,7 +292,7 @@ describe('formatImageResults', () => {
 
   it('omits the preview line when thumbnailSrc is missing', () => {
     const md = formatImageResults(response);
-    expect(md).not.toContain('![](<https://img.test/b.png>');
+    expect(md).not.toContain('![](<https://img.test/b.png>)');
     expect(md).not.toMatch(/!\[\]\(<https:\/\/img\.test\/b\.png>\)/);
   });
 

@@ -367,9 +367,9 @@ describe('mapImageResponse', () => {
   });
 
   it('slices results to maxResults and matches its output schema', () => {
-    const res = mapImageResponse(raw, 1);
-    expect(res.results).toHaveLength(1);
-    expect(imageSearchOutput.safeParse(mapImageResponse(raw, 10)).success).toBe(true);
+    const full = mapImageResponse(raw, 10);
+    expect(mapImageResponse(raw, 1).results).toHaveLength(1);
+    expect(imageSearchOutput.safeParse(full).success).toBe(true);
   });
 });
 

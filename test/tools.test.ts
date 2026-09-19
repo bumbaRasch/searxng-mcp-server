@@ -183,7 +183,7 @@ describe('handleNewsSearch', () => {
   it('returns markdown and schema-valid structured content with time_range', async () => {
     let calledUrl = '';
     const fetchImpl: FetchLike = async (url) => {
-      calledUrl = String(url);
+      calledUrl = url;
       return jsonResponse({
         query: 'fedora',
         results: [

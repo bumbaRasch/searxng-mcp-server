@@ -191,5 +191,8 @@ export function createGuardedDispatcher(opts: {
   // is an IP literal, so the dispatcher alone does not guard literals. Every
   // request through it must also pass `assertUrlAllowed()` first — see
   // fetchContent(), which does both per redirect hop.
+  // undici's connect.lookup expects Node's LookupFunction; our guarded lookup
+  // is signature-compatible (verified behaviorally in ssrf-dispatcher tests).
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   return new Agent({ connect: { lookup: createGuardedLookup(opts) as never } });
 }
