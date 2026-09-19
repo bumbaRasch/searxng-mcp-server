@@ -2950,6 +2950,10 @@ git commit -m "feat: local SearXNG docker setup with JSON API"
   `SEARXNG_PASSWORD`, `SEARXNG_TIMEOUT_MS`, `FETCH_TIMEOUT_MS`, `MAX_CHARS`,
   `MAX_RESPONSE_BYTES`, `USER_AGENT`, `ALLOW_PRIVATE_HOSTS`) and state that MCP
   env is client-provided, not read from `.env`.
+- README security claims must match the code exactly: the mitigation is
+  untrusted-content delimiting + embedded-marker neutralization (`sanitizeUntrusted`)
+  — do NOT claim "control characters are stripped" (not implemented).
+- README runtime floor must match `engines`: `Node >= 22.19`.
 
 - [ ] **Step 1: Create `.github/workflows/ci.yml`**
 

@@ -29,7 +29,7 @@ The bundled `docker-compose.yml` starts SearXNG with the JSON API enabled
 
 ### 2. Build the server
 
-Requires Node >= 22 and [pnpm](https://pnpm.io) 10.
+Requires Node >= 22.19 and [pnpm](https://pnpm.io) 10.
 
 ```bash
 pnpm install && pnpm build
@@ -103,7 +103,7 @@ as data, never as instructions.
   rejecting private, loopback, link-local and other non-public ranges (IPv4 and IPv6),
   IP-literal tricks included. Blocked by default; opt out only with `ALLOW_PRIVATE_HOSTS=true`.
 - **Prompt-injection mitigation**: search output and fetched page content are wrapped in
-  an untrusted-content banner and control characters are stripped before returning to the model.
+  an untrusted-content banner; embedded delimiter markers are neutralized before returning to the model.
 - Secrets (`SEARXNG_PASSWORD`) are never logged; all MCP logs go to stderr, stdout is
   reserved for JSON-RPC.
 
