@@ -37,6 +37,9 @@ describe('isIpBlocked', () => {
     ['fec0::1', true],
     ['64:ff9b::7f00:1', true],
     ['::ffff:8.8.8.8', true],
+    ['[::1]', true],
+    ['fe80::1%eth0', true],
+    ['[fe80::1%eth0]', true],
   ])('classifies %s as blocked=%s', (ip, blocked) => {
     expect(isIpBlocked(ip)).toBe(blocked);
   });
@@ -105,5 +108,14 @@ describe('assertUrlAllowed', () => {
     await expect(
       assertUrlAllowed('http://[::ffff:127.0.0.1]/', { allowPrivateHosts: false }),
     ).rejects.toThrow(/private|reserved/i);
+  });
+
+  it('still rejects scheme/credentials when allowPrivateHosts is true', async () => {
+    await expect(
+      assertUrlAllowed('file:///etc/passwd', { allowPrivateHosts: true }),
+    ).rejects.toThrow(/http/i);
+    await expect(
+      assertUrlAllowed('http://user:pass@x.test', { allowPrivateHosts: true }),
+    ).rejects.toThrow(/credentials/i);
   });
 });

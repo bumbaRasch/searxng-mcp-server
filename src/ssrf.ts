@@ -43,13 +43,16 @@ for (const [net, prefix] of V6_RANGES) BLOCKED_V6.addSubnet(net, prefix, 'ipv6')
 
 function normalizeIp(ip: string): { address: string; family: number } | null {
   let address = ip.trim().toLowerCase();
+  if (address.startsWith('[') && address.endsWith(']')) address = address.slice(1, -1);
   const zone = address.indexOf('%');
   if (zone !== -1) address = address.slice(0, zone);
-  if (address.startsWith('[') && address.endsWith(']')) address = address.slice(1, -1);
   const family = isIP(address);
   return family === 0 ? null : { address, family };
 }
 
+// Classifies IP literals only; returns false for non-IP input. Callers must pass
+// validated IP strings (literal checks or resolved AddressRecord values), never raw
+// hostnames.
 export function isIpBlocked(ip: string): boolean {
   const normalized = normalizeIp(ip);
   if (normalized === null) return false;
