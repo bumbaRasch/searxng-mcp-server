@@ -1,18 +1,30 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { Config } from './config.js';
 import { fetchContent } from './fetch.js';
-import { formatFetchedPage, formatSearchResults, formatToolError } from './format.js';
+import {
+  formatFetchedPage,
+  formatImageResults,
+  formatNewsResults,
+  formatSearchResults,
+  formatToolError,
+} from './format.js';
 import type { FetchLike } from './http.js';
 import {
   fetchInput,
   fetchOutput,
+  imageSearchInput,
+  imageSearchOutput,
+  newsSearchInput,
+  newsSearchOutput,
   searchInput,
   searchOutput,
   toSearchParams,
   type FetchInput,
+  type ImageSearchInput,
+  type NewsSearchInput,
   type SearchInput,
 } from './schemas.js';
-import { SearxngError, search } from './searxng.js';
+import { SearxngError, imageSearch, newsSearch, search } from './searxng.js';
 
 type ToolResult = {
   content: { type: 'text'; text: string }[];
@@ -80,6 +92,46 @@ export async function handleFetch(
   }
 }
 
+export async function handleImageSearch(
+  config: Config,
+  args: ImageSearchInput,
+  deps: ToolDeps = {},
+): Promise<ToolResult> {
+  try {
+    const response = await imageSearch(config, args, { fetchImpl: deps.fetchImpl });
+    return {
+      content: [{ type: 'text', text: formatImageResults(response) }],
+      structuredContent: response,
+    };
+  } catch (error) {
+    const message =
+      error instanceof SearxngError
+        ? error.message
+        : `Image search failed: ${error instanceof Error ? error.message : String(error)}`;
+    return { content: [{ type: 'text', text: formatToolError(message) }], isError: true };
+  }
+}
+
+export async function handleNewsSearch(
+  config: Config,
+  args: NewsSearchInput,
+  deps: ToolDeps = {},
+): Promise<ToolResult> {
+  try {
+    const response = await newsSearch(config, args, { fetchImpl: deps.fetchImpl });
+    return {
+      content: [{ type: 'text', text: formatNewsResults(response) }],
+      structuredContent: response,
+    };
+  } catch (error) {
+    const message =
+      error instanceof SearxngError
+        ? error.message
+        : `News search failed: ${error instanceof Error ? error.message : String(error)}`;
+    return { content: [{ type: 'text', text: formatToolError(message) }], isError: true };
+  }
+}
+
 export function registerTools(server: McpServer, config: Config, deps: ToolDeps = {}): void {
   server.registerTool(
     'search',
@@ -107,5 +159,33 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
       annotations: TOOL_ANNOTATIONS,
     },
     (args) => handleFetch(config, args, deps),
+  );
+
+  server.registerTool(
+    'image_search',
+    {
+      title: 'Image search (SearXNG)',
+      description: withUntrustedSuffix(
+        'Search the web for images. Returns direct image links, thumbnails, resolution and format.',
+      ),
+      inputSchema: imageSearchInput,
+      outputSchema: imageSearchOutput,
+      annotations: TOOL_ANNOTATIONS,
+    },
+    (args) => handleImageSearch(config, args, deps),
+  );
+
+  server.registerTool(
+    'news_search',
+    {
+      title: 'News search (SearXNG)',
+      description: withUntrustedSuffix(
+        'Search recent news articles. Supports a time_range freshness filter.',
+      ),
+      inputSchema: newsSearchInput,
+      outputSchema: newsSearchOutput,
+      annotations: TOOL_ANNOTATIONS,
+    },
+    (args) => handleNewsSearch(config, args, deps),
   );
 }
