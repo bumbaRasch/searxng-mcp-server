@@ -1,4 +1,6 @@
 import { URLSearchParams } from 'node:url';
+import type { Config } from './config.js';
+import { readCapped, type FetchLike } from './http.js';
 import type { SearchAnswer, SearchParams, SearchResponse, SearchResult } from './types.js';
 
 const MAX_RESULT_CONTENT_CHARS = 1000;
@@ -114,4 +116,69 @@ export function mapSearchResponse(raw: unknown, maxResults: number): SearchRespo
     suggestions: asStringArray(data.suggestions).slice(0, MAX_ARRAY_ITEMS),
     unresponsiveEngines,
   };
+}
+
+function origin(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url;
+  }
+}
+
+export async function search(
+  config: Config,
+  params: SearchParams,
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<SearchResponse> {
+  const fetchImpl: FetchLike = opts.fetchImpl ?? fetch;
+  const url = `${config.searxngUrl}/search?${buildSearchQuery(params).toString()}`;
+  const headers: Record<string, string> = {
+    'User-Agent': config.userAgent,
+    Accept: 'application/json',
+  };
+  if (config.searxngUsername) {
+    const credentials = `${config.searxngUsername}:${config.searxngPassword ?? ''}`;
+    headers.Authorization = `Basic ${Buffer.from(credentials).toString('base64')}`;
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), config.searxngTimeoutMs);
+  let response: Awaited<ReturnType<FetchLike>>;
+  try {
+    response = await fetchImpl(url, { headers, signal: controller.signal });
+  } catch (error) {
+    throw new SearxngError(
+      `Could not reach SearXNG at ${origin(config.searxngUrl)}. Is the container running and is SEARXNG_URL correct?`,
+      { cause: error },
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (response.status === 403) {
+    throw new SearxngError(
+      'SearXNG returned 403: the JSON API is disabled. Add "json" to search.formats in settings.yml.',
+    );
+  }
+  if (response.status === 400) {
+    throw new SearxngError(
+      'SearXNG rejected the query parameters (400). Check categories, engines, language, time_range and safesearch.',
+    );
+  }
+  if (!response.ok) {
+    throw new SearxngError(`SearXNG request failed with HTTP ${response.status}.`);
+  }
+
+  const body = await readCapped(response, config.maxResponseBytes);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(body);
+  } catch (error) {
+    throw new SearxngError(
+      'SearXNG returned a non-JSON response. Ensure format=json is enabled in settings.yml.',
+      { cause: error },
+    );
+  }
+  return mapSearchResponse(raw, params.maxResults ?? 10);
 }
