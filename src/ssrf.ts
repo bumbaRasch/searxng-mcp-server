@@ -1,5 +1,6 @@
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { BlockList, isIP } from 'node:net';
+import { Agent } from 'undici';
 
 export type AddressRecord = { address: string; family: number };
 export type LookupAll = (hostname: string) => Promise<AddressRecord[]>;
@@ -122,4 +123,59 @@ export async function assertUrlAllowed(
   }
   assertRecordsAllowed(url.hostname, records, false);
   return url;
+}
+
+export type GuardedLookupOptions = { all?: boolean };
+export type LookupCallback = (
+  error: Error | null,
+  address?: string | AddressRecord[],
+  family?: number,
+) => void;
+
+function guardRecords(
+  hostname: string,
+  records: AddressRecord[],
+  allowPrivateHosts: boolean,
+): Error | null {
+  if (allowPrivateHosts) return null;
+  const blocked = records.find((record) => isIpBlocked(record.address));
+  if (blocked) return new Error(`Blocked private address for ${hostname}: ${blocked.address}`);
+  return null;
+}
+
+export function createGuardedLookup(opts: {
+  allowPrivateHosts: boolean;
+  lookup?: LookupAll;
+}): (hostname: string, options: GuardedLookupOptions, callback: LookupCallback) => void {
+  const lookup = opts.lookup ?? defaultLookup;
+  return (hostname, options, callback) => {
+    lookup(hostname)
+      .then((records) => {
+        const blocked = guardRecords(hostname, records, opts.allowPrivateHosts);
+        if (blocked) {
+          callback(blocked);
+          return;
+        }
+        if (options.all) {
+          callback(null, records);
+          return;
+        }
+        const first = records[0];
+        if (!first) {
+          callback(new Error(`No address found for ${hostname}`));
+          return;
+        }
+        callback(null, first.address, first.family);
+      })
+      .catch((error: unknown) =>
+        callback(error instanceof Error ? error : new Error(String(error))),
+      );
+  };
+}
+
+export function createGuardedDispatcher(opts: {
+  allowPrivateHosts: boolean;
+  lookup?: LookupAll;
+}): Agent {
+  return new Agent({ connect: { lookup: createGuardedLookup(opts) as never } });
 }
