@@ -1,6 +1,6 @@
 {
   "name": "searxng-mcp-server",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "mcpName": "io.github.bumbaRasch/searxng-mcp-server",
   "description": "MCP server for a self-hosted SearXNG instance: web, image, news, video and music search plus page fetch.",
   "type": "module",
