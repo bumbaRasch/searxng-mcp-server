@@ -2,7 +2,6 @@ import { URLSearchParams } from 'node:url';
 import type { Config } from './config.js';
 import { isRedirect, readCapped, type FetchLike } from './http.js';
 import {
-  DEFAULT_MAX_RESULTS,
   MAX_URLS_PER_INFOBOX,
   type ImageSearchResponse,
   type ImageSearchResult,
@@ -310,7 +309,7 @@ export async function search(
   opts: { fetchImpl?: FetchLike | undefined } = {},
 ): Promise<SearchResponse> {
   const raw = await fetchSearchJson(config, params, opts);
-  return mapSearchResponse(raw, params.maxResults ?? DEFAULT_MAX_RESULTS);
+  return mapSearchResponse(raw, params.maxResults);
 }
 
 function pickThumbnail(value: Record<string, unknown>): string | undefined {
@@ -413,7 +412,7 @@ export async function imageSearch(
   opts: { fetchImpl?: FetchLike | undefined } = {},
 ): Promise<ImageSearchResponse> {
   const raw = await fetchSearchJson(config, params, opts);
-  return mapImageResponse(raw, params.maxResults ?? DEFAULT_MAX_RESULTS);
+  return mapImageResponse(raw, params.maxResults);
 }
 
 export async function newsSearch(
@@ -422,7 +421,7 @@ export async function newsSearch(
   opts: { fetchImpl?: FetchLike | undefined } = {},
 ): Promise<NewsSearchResponse> {
   const raw = await fetchSearchJson(config, params, opts);
-  return mapNewsResponse(raw, params.maxResults ?? DEFAULT_MAX_RESULTS);
+  return mapNewsResponse(raw, params.maxResults);
 }
 
 function projectVideoResult(value: unknown): VideoSearchResult | null {
@@ -473,7 +472,7 @@ export async function videoSearch(
   opts: { fetchImpl?: FetchLike | undefined } = {},
 ): Promise<VideoSearchResponse> {
   const raw = await fetchSearchJson(config, params, opts);
-  return mapVideoResponse(raw, params.maxResults ?? DEFAULT_MAX_RESULTS);
+  return mapVideoResponse(raw, params.maxResults);
 }
 
 export async function musicSearch(
@@ -482,5 +481,5 @@ export async function musicSearch(
   opts: { fetchImpl?: FetchLike | undefined } = {},
 ): Promise<MusicSearchResponse> {
   const raw = await fetchSearchJson(config, params, opts);
-  return mapMusicResponse(raw, params.maxResults ?? DEFAULT_MAX_RESULTS);
+  return mapMusicResponse(raw, params.maxResults);
 }

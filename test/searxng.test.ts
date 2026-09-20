@@ -36,7 +36,7 @@ import type { FetchLike } from '../src/http.js';
 
 describe('buildSearchParams', () => {
   it('always sets q and format=json', () => {
-    const qs = buildSearchParams({ query: 'hello world' });
+    const qs = buildSearchParams({ query: 'hello world', maxResults: 10 });
     expect(qs.get('q')).toBe('hello world');
     expect(qs.get('format')).toBe('json');
   });
@@ -44,6 +44,7 @@ describe('buildSearchParams', () => {
   it('joins array params with commas and omits unset params', () => {
     const qs = buildSearchParams({
       query: 'q',
+      maxResults: 10,
       categories: ['general', 'news'],
       engines: ['google', 'brave'],
       language: 'de',
@@ -60,7 +61,7 @@ describe('buildSearchParams', () => {
   });
 
   it('omits empty arrays', () => {
-    const qs = buildSearchParams({ query: 'q', categories: [], engines: [] });
+    const qs = buildSearchParams({ query: 'q', categories: [], engines: [], maxResults: 10 });
     expect(qs.has('categories')).toBe(false);
     expect(qs.has('engines')).toBe(false);
   });
@@ -241,7 +242,7 @@ describe('search', () => {
         results: [{ title: 'T', url: 'https://t', content: 'c' }],
       });
     }) as unknown as FetchLike;
-    const res = await search(config, { query: 'q' }, { fetchImpl });
+    const res = await search(config, { query: 'q', maxResults: 10 }, { fetchImpl });
     expect(calledUrl).toContain('http://searx.test:8888/search?');
     expect(calledUrl).toContain('format=json');
     expect(res.results[0]?.title).toBe('T');
@@ -255,7 +256,7 @@ describe('search', () => {
     }) as unknown as FetchLike;
     await search(
       { ...config, searxngUsername: 'u', searxngPassword: 'p' },
-      { query: 'q' },
+      { query: 'q', maxResults: 10 },
       { fetchImpl },
     );
     expect(auth).toBe(`Basic ${Buffer.from('u:p').toString('base64')}`);
@@ -267,7 +268,11 @@ describe('search', () => {
       auth = new Headers(init?.headers).get('authorization');
       return jsonResponse({ results: [] });
     }) as unknown as FetchLike;
-    await search({ ...config, searxngUsername: 'u' }, { query: 'q' }, { fetchImpl });
+    await search(
+      { ...config, searxngUsername: 'u' },
+      { query: 'q', maxResults: 10 },
+      { fetchImpl },
+    );
     expect(auth).toBe(`Basic ${Buffer.from('u:').toString('base64')}`);
   });
 
@@ -276,11 +281,11 @@ describe('search', () => {
       throw new Error('ECONNREFUSED');
     }) as unknown as FetchLike;
     const secretConfig = { ...config, searxngUrl: 'http://user:sekret@searx.test:8888' };
-    await expect(search(secretConfig, { query: 'q' }, { fetchImpl })).rejects.toThrow(
-      /http:\/\/searx\.test:8888/,
-    );
+    await expect(
+      search(secretConfig, { query: 'q', maxResults: 10 }, { fetchImpl }),
+    ).rejects.toThrow(/http:\/\/searx\.test:8888/);
     try {
-      await search(secretConfig, { query: 'q' }, { fetchImpl });
+      await search(secretConfig, { query: 'q', maxResults: 10 }, { fetchImpl });
     } catch (error) {
       expect((error as Error).message).not.toContain('sekret');
     }
@@ -289,42 +294,48 @@ describe('search', () => {
   it('explains a 403 as a disabled JSON API', async () => {
     const fetchImpl = (async () =>
       new Response('forbidden', { status: 403 })) as unknown as FetchLike;
-    await expect(search(config, { query: 'q' }, { fetchImpl })).rejects.toThrow(/search\.formats/);
+    await expect(search(config, { query: 'q', maxResults: 10 }, { fetchImpl })).rejects.toThrow(
+      /search\.formats/,
+    );
   });
 
   it('explains a 400 as bad parameters', async () => {
     const fetchImpl = (async () => new Response('bad', { status: 400 })) as unknown as FetchLike;
-    await expect(search(config, { query: 'q' }, { fetchImpl })).rejects.toThrow(/parameters/i);
+    await expect(search(config, { query: 'q', maxResults: 10 }, { fetchImpl })).rejects.toThrow(
+      /parameters/i,
+    );
   });
 
   it('wraps connection failures with the configured URL', async () => {
     const fetchImpl = (async () => {
       throw new Error('ECONNREFUSED');
     }) as unknown as FetchLike;
-    await expect(search(config, { query: 'q' }, { fetchImpl })).rejects.toThrow(
+    await expect(search(config, { query: 'q', maxResults: 10 }, { fetchImpl })).rejects.toThrow(
       /http:\/\/searx\.test:8888/,
     );
   });
 
   it('is a SearxngError', async () => {
     const fetchImpl = (async () => new Response('nope', { status: 500 })) as unknown as FetchLike;
-    await expect(search(config, { query: 'q' }, { fetchImpl })).rejects.toBeInstanceOf(
-      SearxngError,
-    );
+    await expect(
+      search(config, { query: 'q', maxResults: 10 }, { fetchImpl }),
+    ).rejects.toBeInstanceOf(SearxngError);
   });
 
   it('rejects an oversized response body', async () => {
     const fetchImpl = (async () =>
       new Response('x'.repeat(2000), { status: 200 })) as unknown as FetchLike;
     await expect(
-      search({ ...config, maxResponseBytes: 100 }, { query: 'q' }, { fetchImpl }),
+      search({ ...config, maxResponseBytes: 100 }, { query: 'q', maxResults: 10 }, { fetchImpl }),
     ).rejects.toThrow(/byte limit/i);
   });
 
   it('reports a non-JSON body', async () => {
     const fetchImpl = (async () =>
       new Response('<html>nope</html>', { status: 200 })) as unknown as FetchLike;
-    await expect(search(config, { query: 'q' }, { fetchImpl })).rejects.toThrow(/non-JSON/i);
+    await expect(search(config, { query: 'q', maxResults: 10 }, { fetchImpl })).rejects.toThrow(
+      /non-JSON/i,
+    );
   });
 
   it('aborts a stalled response body via the timeout', async () => {
@@ -345,7 +356,7 @@ describe('search', () => {
       });
     }) as unknown as FetchLike;
     await expect(
-      search({ ...config, searxngTimeoutMs: 10 }, { query: 'q' }, { fetchImpl }),
+      search({ ...config, searxngTimeoutMs: 10 }, { query: 'q', maxResults: 10 }, { fetchImpl }),
     ).rejects.toBeInstanceOf(SearxngError);
   });
 });
@@ -627,7 +638,7 @@ describe('videoSearch/musicSearch clients', () => {
 
     const music: MusicSearchResponse = await musicSearch(
       config,
-      toMusicSearchParams(musicSearchInput.parse({ query: 'q' })),
+      toMusicSearchParams(musicSearchInput.parse({ query: 'q', maxResults: 10 })),
       {
         fetchImpl,
       },

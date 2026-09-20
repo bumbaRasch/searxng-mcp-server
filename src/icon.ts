@@ -1,8 +1,7 @@
 import type { Icon } from '@modelcontextprotocol/server';
 
-// Generated from assets/icon.png — regenerate with the script in this file's
-// git history if the source image changes. Data URIs keep the server
-// self-contained (no hosting, works offline).
+// Generated from assets/icon.png — data URIs keep the server self-contained
+// (no hosting, works offline). Regenerate after changing the source image.
 
 function decodeLines(lines: readonly string[]): string {
   return lines.join('');

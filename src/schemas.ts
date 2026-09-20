@@ -217,7 +217,7 @@ export interface SearchParams {
   timeRange?: TimeRange | undefined;
   pageno?: number | undefined;
   safesearch?: Safesearch | undefined;
-  maxResults?: number | undefined;
+  maxResults: number;
 }
 
 interface CommonSearchArgs {
