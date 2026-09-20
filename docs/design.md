@@ -12,14 +12,17 @@ instance to MCP clients (OpenCode, Claude, Cursor, …). It provides six tools:
 - `video_search` — find videos with previews, duration and a freshness filter.
 - `music_search` — find music, including direct audio file links when available.
 
-The server speaks MCP over **stdio**; the companion SearXNG instance runs in
-Docker (loopback-only) and is configured to expose its JSON API.
+The server speaks MCP over **stdio** (default) or **Streamable HTTP**
+(opt-in, `SEARXNG_TRANSPORT=http` / `--transport http`); the companion
+SearXNG instance runs in Docker (loopback-only) and is configured to expose
+its JSON API.
 
 ## Architecture
 
 ```
 MCP client
-      │  stdio (JSON-RPC)
+      │  stdio (JSON-RPC) — default
+      │  HTTP POST/GET /mcp (Streamable HTTP) — opt-in
       ▼
 searxng-mcp-server (node dist/index.js)
       │                        │
@@ -27,6 +30,27 @@ searxng-mcp-server (node dist/index.js)
       ▼                        ▼
 SearXNG (docker, 127.0.0.1:8888)   external website
 ```
+
+### Transports
+
+Both transports share the same transport-agnostic `createServer()` factory;
+only `src/index.ts` differs:
+
+- **stdio** — the default. The MCP client spawns the process (`npx`) and
+  speaks newline-delimited JSON-RPC over stdin/stdout; logs go to stderr.
+- **Streamable HTTP** — opt-in. A single `/mcp` endpoint served by plain
+  `node:http` and the SDK's `createMcpHandler` in `legacy: 'reject'` mode:
+  the endpoint speaks the **2026-07-28 protocol revision only** (per-request
+  `_meta` envelopes, no `Mcp-Session-Id` sessions — serving is stateless,
+  one fresh `McpServer` per request via the factory, so replicas scale
+  horizontally). 2025-era requests are rejected with an
+  unsupported-protocol-version error naming the supported revisions. Every
+  request passes through a bearer-token gate (when `SEARXNG_AUTH_TOKEN` is
+  set), then `Host` and `Origin` validation (localhost allowlist plus
+  `SEARXNG_ALLOWED_HOSTS`/`SEARXNG_ALLOWED_ORIGINS`) — the DNS-rebinding
+  protections the MCP spec requires. Binding to a non-localhost `HOST`
+  without a token refuses startup (fail-fast in `loadConfig`, not a
+  warning). See [HTTP security model](#http-transport) below.
 
 The server is a thin, stateless adapter. SearXNG aggregates upstream search
 engines; `fetch_content` retrieves and extracts a single page.
@@ -44,7 +68,7 @@ seconds are normalized to `M:SS`/`H:MM:SS`).
 
 | Module | Responsibility |
 | --- | --- |
-| `src/index.ts` | stdio bin entrypoint (transport wiring only) |
+| `src/index.ts` | bin entrypoint: transport selection (`--transport` flag > `SEARXNG_TRANSPORT` env), stdio wiring, HTTP listener lifecycle, signal handling |
 | `src/server.ts` | `createServer()` — transport-agnostic server factory |
 | `src/tools.ts` | MCP tool registration + error boundary (sanitizes reflected strings) |
 | `src/schemas.ts` | zod input/output schemas — the single source of truth for data shapes (`z.infer` types used everywhere) + `to*SearchParams` mappers |
@@ -55,7 +79,9 @@ seconds are normalized to `M:SS`/`H:MM:SS`).
 | `src/extract.ts` | Readability extraction, DOM cleaning/absolutization, text stripping |
 | `src/markdown.ts` | turndown HTML→Markdown + output truncation |
 | `src/format.ts` | Markdown rendering + untrusted-content wrapping/sanitization + tool error text |
-| `src/config.ts` | env parsing + defaults (warns on stderr for invalid `SEARXNG_URL`) |
+| `src/config.ts` | env parsing + defaults (warns on stderr for invalid values; refuses insecure non-localhost HTTP binds) |
+| `src/argv.ts` | `--transport stdio\|http` CLI flag parsing (throws on typos — explicit intent) |
+| `src/http-server.ts` | Streamable HTTP stack: `createMcpHandler` (modern-only), bearer gate, Host/Origin validation, `node:http` wiring |
 | `src/version.ts` | `VERSION` constant (kept in sync with package.json by a test) |
 
 Dependency direction (per-module, as imported): `config`, `schemas`, `http`,
@@ -64,8 +90,10 @@ Dependency direction (per-module, as imported): `config`, `schemas`, `http`,
 `config`/`ssrf`/`extract`/`markdown`/`http`/`schemas`; `tools` →
 `config`/`fetch`/`format`/`schemas`/`searxng` plus type-only imports of
 `http` (`FetchLike`) and `ssrf` (`LookupAll`), and the MCP SDK; `server` →
-`config`/`tools`/`version` (+ MCP); `index` → `config`/`server`/`version`
-(+ MCP stdio transport). All network seams (`FetchLike`, DNS `lookup`) are
+`config`/`tools`/`version` (+ MCP); `http-server` →
+`config`/`server`/`tools` (types) (+ MCP server root and the
+`@modelcontextprotocol/node` adapter); `index` → `argv`/`config`/
+`http-server`/`server`/`version` (+ MCP stdio transport). All network seams (`FetchLike`, DNS `lookup`) are
 injectable — including at the MCP boundary, where `ToolDeps` threads them
 from `registerTools`/`createServer` — so the whole surface is unit-testable
 without monkey-patching.
@@ -133,9 +161,39 @@ no API keys.
   the `Authorization` header; error messages surface only the sanitized
   origin of `SEARXNG_URL` (embedded credentials are stripped at config load);
   nothing is ever logged to stdout (JSON-RPC only).
+
+### HTTP transport
+
+- **Fail-fast exposure guard**: `loadConfig` *throws* (unlike the
+  warn-and-fallback env parsing) when `SEARXNG_TRANSPORT=http` would bind a
+  non-localhost `HOST` without `SEARXNG_AUTH_TOKEN` — an unauthenticated
+  remote bind must never come up by accident. `0.0.0.0`/`::` count as
+  non-localhost. Docker/compose deployments (where the container must bind
+  `0.0.0.0`) therefore always pair the bind with a token.
+- **Bearer auth** (`SEARXNG_AUTH_TOKEN`): the SDK's `requireBearerAuth` gate
+  answers `401`/`403` with proper `WWW-Authenticate` challenges. The token
+  is verified by comparing SHA-256 digests with `timingSafeEqual` — no
+  early-exit length leak; the token value never reaches logs or errors.
+  A static token has no expiry, so the synthesized `AuthInfo` carries a
+  far-future `expiresAt` (the SDK rejects tokens without one).
+- **DNS-rebinding protection**: every request's `Host` and `Origin` headers
+  are validated against the localhost allowlist plus operator-supplied
+  extras (`SEARXNG_ALLOWED_HOSTS`/`SEARXNG_ALLOWED_ORIGINS`); the SDK
+  helpers deny unparsable/`null` origins and answer `403`. Requests without
+  an `Origin` pass — non-browser MCP clients do not send one.
+- **Protocol-era strictness**: `legacy: 'reject'` — no 2025-era serving, no
+  session state to hijack or leak. The trade-off is explicit: clients must
+  speak (or negotiate to) the 2026-07-28 revision; older HTTP clients get a
+  typed unsupported-protocol-version error naming the supported revisions.
+- **TLS** is deliberately not implemented: the server binds loopback by
+  default, and remote deployments terminate TLS at a reverse proxy
+  (`docker-compose.http.yml` + `nginx/mcp-proxy.conf` show the pattern).
 - **Lifecycle**: Shutdown is bounded by `SHUTDOWN_TIMEOUT_MS` (default 5 s, minimum 100 ms): if a graceful `close()` does not finish within it — or a second signal arrives — the process exits immediately with code 0.
 
 ## Non-goals
 
-- Site crawling/spidering, JavaScript rendering, hosted/remote transports
-  (stdio only), replacing SearXNG itself.
+- Site crawling/spidering, JavaScript rendering, hosted search backends or
+  zero-config public SearXNG instances (self-hosted is this project's core
+  privacy stance), replacing SearXNG itself. The deprecated HTTP+SSE
+  transport and 2025-era Streamable HTTP sessions are also out: the HTTP
+  path is modern-only (2026-07-28) by design.

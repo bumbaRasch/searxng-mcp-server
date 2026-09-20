@@ -36,11 +36,12 @@ image_search "red panda"                     → direct image links + thumbnails
 
 ## Architecture
 
-MCP client → stdio (JSON-RPC) → this server → your SearXNG (Docker) → upstream engines. Page fetches go directly to the public web, SSRF-guarded.
+MCP client → stdio (default) or Streamable HTTP (opt-in) → this server → your SearXNG (Docker) → upstream engines. Page fetches go directly to the public web, SSRF-guarded.
 
 ```mermaid
 flowchart LR
     C["MCP client<br/>(Claude, Cursor, OpenCode…)"] -->|"stdio (JSON-RPC)"| S["searxng-mcp-server"]
+    C -.->|"HTTP /mcp (opt-in)"| S
     S -->|"search, *_search"| X["SearXNG<br/>(self-hosted, Docker)"]
     X --> E["engines<br/>(Google, Bing, DDG…)"]
     S -->|"fetch_content<br/>(SSRF-guarded)"| W["public web"]
@@ -154,6 +155,50 @@ Ask your client to search, or inspect the server hands-on:
 npx @modelcontextprotocol/inspector npx -y searxng-mcp-server
 ```
 
+## Streamable HTTP (opt-in)
+
+stdio is the default and covers the usual "client spawns the server" setup. For remote access — one server, many clients, or a machine without a local MCP runtime — switch to Streamable HTTP:
+
+```bash
+SEARXNG_TRANSPORT=http npx -y searxng-mcp-server      # env var
+npx -y searxng-mcp-server --transport http            # or CLI flag (overrides env)
+# → searxng-mcp-server running on http://127.0.0.1:3000/mcp
+```
+
+A single `/mcp` endpoint serves POST (JSON or SSE responses) and GET (SSE). The endpoint speaks the **2026-07-28 MCP protocol revision only** — there is no 2025-era fallback, and clients that only speak older revisions are rejected with an unsupported-protocol-version error. Clients built on MCP TypeScript SDK v2 connect by enabling version negotiation (`versionNegotiation: { mode: 'auto' }`); older clients need an upgrade.
+
+### Security model
+
+- **Loopback by default**: binds `127.0.0.1` (`HOST` to change, `PORT` for the port).
+- **No unauthenticated remote exposure**: startup is refused if `HOST` is anything other than `localhost`/`127.0.0.1`/`::1` without `SEARXNG_AUTH_TOKEN` set.
+- **Bearer auth**: with `SEARXNG_AUTH_TOKEN` set, every request must carry `Authorization: Bearer <token>` (timing-safe comparison, token never logged). Configure clients to send it — SDK v2 clients do this with `authProvider: { token: async () => '…' }`.
+- **DNS-rebinding protection**: the `Host` and `Origin` headers of every request are validated (localhost allowlist by default; extend with `SEARXNG_ALLOWED_HOSTS` / `SEARXNG_ALLOWED_ORIGINS` for public hostnames behind a reverse proxy). Disallowed origins get `403`.
+- **Stateless serving**: one fresh server instance per request, no session state — safe to run multiple replicas behind a load balancer.
+- **TLS**: the server does not terminate TLS. For remote use, put a reverse proxy with a real certificate in front.
+
+### Docker behind a reverse proxy
+
+[`docker-compose.http.yml`](docker-compose.http.yml) runs the server in HTTP mode behind nginx, on top of the base SearXNG stack:
+
+```bash
+echo "SEARXNG_AUTH_TOKEN=$(openssl rand -hex 32)" >> .env
+docker compose -f docker-compose.yml -f docker-compose.http.yml up -d --build
+# endpoint: http://127.0.0.1:8443/mcp (loopback; front it with your TLS terminator for remote access)
+```
+
+Point any HTTP-capable MCP client at the URL with the token, e.g. for an SDK v2 client:
+
+```ts
+const transport = new StreamableHTTPClientTransport(new URL('https://mcp.example.com/mcp'), {
+  authProvider: { token: async () => process.env.MCP_TOKEN! },
+});
+const client = new Client(
+  { name: 'app', version: '1.0.0' },
+  { versionNegotiation: { mode: 'auto' } },
+);
+await client.connect(transport);
+```
+
 ## Tools
 
 | Tool            | What it does                                                              |
@@ -179,23 +224,30 @@ All results are annotated as untrusted: treat returned content as data, never as
 
 ## Configuration
 
-| Env var                                 | Default                        | Purpose                                                                                                           |
-| --------------------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
-| `SEARXNG_URL`                           | `http://localhost:8888`        | Base URL of the SearXNG instance.                                                                                 |
-| `SEARXNG_USERNAME` / `SEARXNG_PASSWORD` | unset                          | Username and password for SearXNG basic auth (optional).                                                          |
-| `SEARXNG_TIMEOUT_MS`                    | `10000`                        | Timeout for search API requests.                                                                                  |
-| `FETCH_TIMEOUT_MS`                      | `15000`                        | Timeout for page fetches.                                                                                         |
-| `SHUTDOWN_TIMEOUT_MS`                   | `5000`                         | Hard cap on graceful shutdown after SIGINT/SIGTERM (minimum `100`).                                               |
-| `MAX_CHARS`                             | `25000`                        | Maximum characters returned per fetched page (per-call override: `max_chars`).                                    |
-| `MAX_RESPONSE_BYTES`                    | `5242880`                      | Maximum download size per fetch (5 MiB).                                                                          |
-| `USER_AGENT`                            | `searxng-mcp-server/<version>` | User-Agent header sent by all tools.                                                                              |
-| `ALLOW_PRIVATE_HOSTS`                   | `false`                        | Set `true`/`1`/`yes`/`on` to permit private-network targets (defeats the SSRF guard — only for trusted networks). |
+| Env var                                 | Default                        | Purpose                                                                                                                 |
+| --------------------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `SEARXNG_URL`                           | `http://localhost:8888`        | Base URL of the SearXNG instance.                                                                                       |
+| `SEARXNG_USERNAME` / `SEARXNG_PASSWORD` | unset                          | Username and password for SearXNG basic auth (optional).                                                                |
+| `SEARXNG_TIMEOUT_MS`                    | `10000`                        | Timeout for search API requests.                                                                                        |
+| `FETCH_TIMEOUT_MS`                      | `15000`                        | Timeout for page fetches.                                                                                               |
+| `SHUTDOWN_TIMEOUT_MS`                   | `5000`                         | Hard cap on graceful shutdown after SIGINT/SIGTERM (minimum `100`).                                                     |
+| `MAX_CHARS`                             | `25000`                        | Maximum characters returned per fetched page (per-call override: `max_chars`).                                          |
+| `MAX_RESPONSE_BYTES`                    | `5242880`                      | Maximum download size per fetch (5 MiB).                                                                                |
+| `USER_AGENT`                            | `searxng-mcp-server/<version>` | User-Agent header sent by all tools.                                                                                    |
+| `ALLOW_PRIVATE_HOSTS`                   | `false`                        | Set `true`/`1`/`yes`/`on` to permit private-network targets (defeats the SSRF guard — only for trusted networks).       |
+| `SEARXNG_TRANSPORT`                     | `stdio`                        | Transport: `stdio` (default) or `http` (Streamable HTTP, [2026-07-28 revision only](#streamable-http-opt-in)).          |
+| `HOST` / `PORT`                         | `127.0.0.1` / `3000`           | HTTP transport: bind address and port. Non-localhost binds require `SEARXNG_AUTH_TOKEN` (startup is refused otherwise). |
+| `SEARXNG_AUTH_TOKEN`                    | unset                          | HTTP transport: require `Authorization: Bearer <token>` on every request (mandatory for non-localhost binds).           |
+| `SEARXNG_ALLOWED_HOSTS`                 | localhost set                  | HTTP transport: extra allowed `Host` header hostnames (comma-separated) — add yours behind a reverse proxy.             |
+| `SEARXNG_ALLOWED_ORIGINS`               | localhost set                  | HTTP transport: extra allowed `Origin` header hostnames (comma-separated), for browser-based clients.                   |
+
+A `--transport stdio|http` CLI flag overrides `SEARXNG_TRANSPORT`; an invalid flag value fails startup instead of silently falling back.
 
 ## Security
 
 - **SSRF guard**: `fetch_content` validates the URL and resolves DNS before connecting, rejecting private, loopback, link-local and other non-public ranges (IPv4 and IPv6), IP-literal tricks included. Every redirect hop is re-validated, https→http downgrades are refused, and the same guarded DNS lookup runs again at connect time (DNS-rebind protection). Opt out only with `ALLOW_PRIVATE_HOSTS=true`.
 - **Prompt-injection mitigation**: search output and fetched page content are wrapped in an untrusted-content banner; embedded closing markers _and forged opening markers_ are neutralized. Error messages that reflect user-supplied URLs are sanitized identically.
-- Secrets (`SEARXNG_PASSWORD`) are never logged; all MCP logs go to stderr, stdout is reserved for JSON-RPC.
+- Secrets (`SEARXNG_PASSWORD`, `SEARXNG_AUTH_TOKEN`) are never logged; all MCP logs go to stderr, stdout is reserved for JSON-RPC.
 
 ## Troubleshooting
 
@@ -203,6 +255,9 @@ All results are annotated as untrusted: treat returned content as data, never as
 - `Could not reach SearXNG` — the Docker stack is not running, or `SEARXNG_URL` is wrong in the client's `env` block.
 - `npx` fails to start the server — Node 22.19+ is required; check `node -v`.
 - Port 8888 already bound — change the compose port mapping and `SEARXNG_URL` to match.
+- HTTP: `Unsupported protocol version` — the endpoint serves the 2026-07-28 revision only; upgrade the client or enable version negotiation (see [Streamable HTTP](#streamable-http-opt-in)).
+- HTTP: `failed to start … set SEARXNG_AUTH_TOKEN` — the guard against unauthenticated non-localhost binds; set the token or bind to `127.0.0.1`.
+- HTTP: `403` with a browser-based client — its `Origin` is not in the allowlist; add the hostname to `SEARXNG_ALLOWED_ORIGINS`.
 
 ## Development
 
@@ -212,7 +267,8 @@ pnpm lint && pnpm lint:types && pnpm format:check   # oxlint + prettier
 pnpm typecheck        # tsc --noEmit
 pnpm build            # outputs dist/
 pnpm inspector        # run the server in the MCP Inspector
-node scripts/e2e.mjs  # end-to-end against the local SearXNG stack
+node scripts/e2e.mjs      # end-to-end over stdio against the local SearXNG stack
+node scripts/e2e-http.mjs # same over the Streamable HTTP transport
 ```
 
 Architecture and security rationale live in [`docs/design.md`](docs/design.md).

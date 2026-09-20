@@ -12,3 +12,4 @@ skills-lock.json
 docs/superpowers/
 .DS_Store
 Thumbs.db
+.zcode/

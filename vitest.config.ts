@@ -7,13 +7,17 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['src'],
+      // The bin entrypoint wires transports to process-level concerns (argv,
+      // env, signal handlers, process.exit) — exercised by scripts/e2e.mjs
+      // and the http smoke checks instead of in-process unit tests.
+      exclude: ['src/index.ts'],
       reporter: ['text', 'html'],
       thresholds: {
         autoUpdate: true,
-        lines: 95.87,
-        functions: 90.27,
-        branches: 87.97,
-        statements: 93.86,
+        lines: 99.2,
+        functions: 94.33,
+        branches: 89.12,
+        statements: 96.95,
       },
     },
   },

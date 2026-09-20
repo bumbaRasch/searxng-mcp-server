@@ -2,12 +2,33 @@
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
-import { loadConfig } from './config.js';
+import { parseTransportArgv } from './argv.js';
+import { loadConfig, type Config } from './config.js';
+import { startHttpServer } from './http-server.js';
 import { SERVER_NAME, createServer } from './server.js';
 import { VERSION } from './version.js';
 
 export async function main(): Promise<void> {
+  // The CLI flag is explicit intent and throws on typos; env config only warns.
+  const argTransport = parseTransportArgv(process.argv.slice(2));
   const config = loadConfig(process.env, VERSION, console.error);
+  const transport = argTransport ?? config.transport;
+  const close = transport === 'http' ? await startHttp(config) : await startStdio(config);
+
+  let shuttingDown = false;
+  const shutdown = (): void => {
+    if (shuttingDown) process.exit(0); // second signal: skip the grace period
+    shuttingDown = true;
+    // close() waits for in-flight exchanges; bound it so a hung close
+    // cannot trap the process until the container SIGKILLs it.
+    setTimeout(() => process.exit(0), config.shutdownTimeoutMs).unref();
+    void close().finally(() => process.exit(0));
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+}
+
+async function startStdio(config: Config): Promise<() => Promise<void>> {
   const server = createServer(config);
   // oxlint-disable-next-line unicorn/prefer-add-event-listener -- the SDK's canonical error hook is the onerror property
   server.server.onerror = (error) => {
@@ -16,18 +37,13 @@ export async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error(`${SERVER_NAME} ${VERSION} running on stdio`);
+  return () => server.close();
+}
 
-  let shuttingDown = false;
-  const shutdown = (): void => {
-    if (shuttingDown) process.exit(0); // second signal: skip the grace period
-    shuttingDown = true;
-    // SDK close() waits for in-flight exchanges; bound it so a hung close
-    // cannot trap the process until the container SIGKILLs it.
-    setTimeout(() => process.exit(0), config.shutdownTimeoutMs).unref();
-    void server.close().finally(() => process.exit(0));
-  };
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+async function startHttp(config: Config): Promise<() => Promise<void>> {
+  const handle = await startHttpServer(config);
+  console.error(`${SERVER_NAME} ${VERSION} running on ${handle.url} (transport: http)`);
+  return () => handle.close();
 }
 
 function isMain(): boolean {

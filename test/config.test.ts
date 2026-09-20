@@ -12,6 +12,12 @@ describe('loadConfig', () => {
     expect(cfg.userAgent).toBe('searxng-mcp-server/9.9.9');
     expect(cfg.allowPrivateHosts).toBe(false);
     expect(cfg.searxngUsername).toBeUndefined();
+    expect(cfg.transport).toBe('stdio');
+    expect(cfg.host).toBe('127.0.0.1');
+    expect(cfg.port).toBe(3000);
+    expect(cfg.authToken).toBeUndefined();
+    expect(cfg.allowedHosts).toEqual([]);
+    expect(cfg.allowedOrigins).toEqual([]);
   });
 
   it('strips trailing slashes from the SearXNG URL', () => {
@@ -158,5 +164,86 @@ describe('SHUTDOWN_TIMEOUT_MS', () => {
     const config = loadConfig({ SHUTDOWN_TIMEOUT_MS: '50' }, '1.0.0', (m) => warnings.push(m));
     expect(config.shutdownTimeoutMs).toBe(5000);
     expect(warnings.join('\n')).toMatch(/>= 100/);
+  });
+});
+
+describe('transport / host / port', () => {
+  it('parses SEARXNG_TRANSPORT case-insensitively', () => {
+    expect(loadConfig({ SEARXNG_TRANSPORT: 'http' }, '0.0.0').transport).toBe('http');
+    expect(loadConfig({ SEARXNG_TRANSPORT: ' STDIO ' }, '0.0.0').transport).toBe('stdio');
+  });
+
+  it('warns and falls back to stdio on an invalid transport', () => {
+    const warnings: string[] = [];
+    const cfg = loadConfig({ SEARXNG_TRANSPORT: 'grpc' }, '0.0.0', (m) => warnings.push(m));
+    expect(cfg.transport).toBe('stdio');
+    expect(warnings.join('\n')).toMatch(/SEARXNG_TRANSPORT/);
+  });
+
+  it('accepts PORT within the valid range and rejects out-of-range values', () => {
+    expect(loadConfig({ PORT: '8080' }, '0.0.0').port).toBe(8080);
+    const warnings: string[] = [];
+    expect(loadConfig({ PORT: '70000' }, '0.0.0', (m) => warnings.push(m)).port).toBe(3000);
+    expect(loadConfig({ PORT: '0' }, '0.0.0', (m) => warnings.push(m)).port).toBe(3000);
+    expect(warnings.join('\n')).toMatch(/between 1 and 65535/);
+  });
+
+  it('splits allowlist env values on commas and drops empties', () => {
+    const cfg = loadConfig(
+      {
+        SEARXNG_ALLOWED_HOSTS: 'mcp.example.com, localhost ,',
+        SEARXNG_ALLOWED_ORIGINS: 'app.example.com',
+      },
+      '0.0.0',
+    );
+    expect(cfg.allowedHosts).toEqual(['mcp.example.com', 'localhost']);
+    expect(cfg.allowedOrigins).toEqual(['app.example.com']);
+  });
+
+  it('reads SEARXNG_AUTH_TOKEN only when non-blank', () => {
+    expect(loadConfig({ SEARXNG_AUTH_TOKEN: 'secret-token' }, '0.0.0').authToken).toBe(
+      'secret-token',
+    );
+    expect(loadConfig({ SEARXNG_AUTH_TOKEN: '   ' }, '0.0.0').authToken).toBeUndefined();
+  });
+});
+
+describe('non-localhost HTTP bind guard', () => {
+  it('refuses a non-localhost bind without an auth token', () => {
+    expect(() => loadConfig({ SEARXNG_TRANSPORT: 'http', HOST: '0.0.0.0' }, '0.0.0')).toThrow(
+      /SEARXNG_AUTH_TOKEN/,
+    );
+    expect(() =>
+      loadConfig({ SEARXNG_TRANSPORT: 'http', HOST: 'mcp.example.com' }, '0.0.0'),
+    ).toThrow(/mcp\.example\.com/);
+  });
+
+  it('allows a non-localhost bind with an auth token', () => {
+    const cfg = loadConfig(
+      { SEARXNG_TRANSPORT: 'http', HOST: '0.0.0.0', SEARXNG_AUTH_TOKEN: 'secret-token' },
+      '0.0.0',
+    );
+    expect(cfg.transport).toBe('http');
+    expect(cfg.authToken).toBe('secret-token');
+  });
+
+  it('allows localhost binds without a token, and never checks stdio', () => {
+    for (const host of ['localhost', '127.0.0.1', '::1']) {
+      expect(loadConfig({ SEARXNG_TRANSPORT: 'http', HOST: host }, '0.0.0').host).toBe(host);
+    }
+    expect(loadConfig({ HOST: '0.0.0.0' }, '0.0.0').transport).toBe('stdio');
+  });
+
+  it('does not leak the auth token in the thrown message', () => {
+    let message = '';
+    try {
+      loadConfig(
+        { SEARXNG_TRANSPORT: 'http', HOST: '0.0.0.0', SEARXNG_AUTH_TOKEN: '   ' },
+        '0.0.0',
+      );
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).not.toContain('   ');
   });
 });

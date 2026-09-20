@@ -7,12 +7,12 @@
     "url": "https://github.com/bumbaRasch/searxng-mcp-server",
     "source": "github"
   },
-  "version": "0.2.0",
+  "version": "0.3.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "searxng-mcp-server",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "transport": {
         "type": "stdio"
       },
@@ -20,6 +20,13 @@
         {
           "name": "SEARXNG_URL",
           "description": "Base URL of the SearXNG instance",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "SEARXNG_TRANSPORT",
+          "description": "Transport: stdio (default) or http (Streamable HTTP, 2026-07-28 revision only)",
           "format": "string",
           "isRequired": false,
           "isSecret": false

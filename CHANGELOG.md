@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-09-20
+
+### Added
+
+- Opt-in Streamable HTTP transport alongside stdio ([#9](https://github.com/bumbaRasch/searxng-mcp-server/issues/9)): `SEARXNG_TRANSPORT=http` or `--transport http` serves a single `/mcp` endpoint speaking the 2026-07-28 MCP protocol revision only (no 2025-era fallback, stateless per-request serving — no `Mcp-Session-Id` sessions). stdio remains the default; existing `npx` setups are unchanged.
+- HTTP security: loopback bind by default (`HOST`/`PORT`); startup refused on a non-localhost bind without `SEARXNG_AUTH_TOKEN`; optional bearer-token auth (`401`/`403` with `WWW-Authenticate`, timing-safe compare); `Host`/`Origin` validation on every request (localhost allowlist + `SEARXNG_ALLOWED_HOSTS`/`SEARXNG_ALLOWED_ORIGINS`) for DNS-rebinding protection.
+- Docker deployment: `Dockerfile` and `docker-compose.http.yml` — the server in HTTP mode behind an nginx reverse proxy on top of the base SearXNG stack.
+
 ## [0.2.0] - 2026-09-20
 
 ### Added
@@ -44,7 +52,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bundled SearXNG Docker stack (pinned image, loopback-only) and end-to-end verification script.
 - 260 unit tests, CI matrix (Node 22.19/24/26), type-aware linting, coverage.
 
-[Unreleased]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/bumbaRasch/searxng-mcp-server/releases/tag/v0.3.0
 [0.2.0]: https://github.com/bumbaRasch/searxng-mcp-server/releases/tag/v0.2.0
 [0.1.2]: https://github.com/bumbaRasch/searxng-mcp-server/releases/tag/v0.1.2
 [0.1.1]: https://www.npmjs.com/package/searxng-mcp-server/v/0.1.1

@@ -1,6 +1,6 @@
 {
   "name": "searxng-mcp-server",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "mcpName": "io.github.bumbaRasch/searxng-mcp-server",
   "description": "MCP server for a self-hosted SearXNG instance: web, image, news, video and music search plus page fetch.",
   "type": "module",
@@ -51,6 +51,7 @@
     "inspector": "npx -y @modelcontextprotocol/inspector node dist/index.js"
   },
   "dependencies": {
+    "@modelcontextprotocol/node": "^2.0.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "@mozilla/readability": "^0.6.0",
     "linkedom": "^0.18.13",
@@ -59,6 +60,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "^2.0.0",
     "@types/node": "^26.6.2",
     "@types/turndown": "^5.0.6",
     "@vitest/coverage-v8": "^5.0.1",

@@ -13,6 +13,7 @@ export function asFetchLike(fn: unknown): FetchLike {
 /** Shared test configuration; per-file defaults can be overridden. */
 export function makeConfig(overrides: Partial<Config> = {}): Config {
   return {
+    transport: 'stdio',
     searxngUrl: 'http://searx.test:8888',
     searxngTimeoutMs: 1000,
     fetchTimeoutMs: 1000,
@@ -21,6 +22,10 @@ export function makeConfig(overrides: Partial<Config> = {}): Config {
     maxResponseBytes: 100_000,
     userAgent: 'test/1.0',
     allowPrivateHosts: true, // unit tests skip DNS via injected lookups or literals
+    host: '127.0.0.1',
+    port: 0, // ephemeral: every use listens on its own free port
+    allowedHosts: [],
+    allowedOrigins: [],
     ...overrides,
   };
 }

@@ -1,4 +1,7 @@
+export type Transport = 'stdio' | 'http';
+
 export interface Config {
+  transport: Transport;
   searxngUrl: string;
   searxngUsername?: string;
   searxngPassword?: string;
@@ -9,6 +12,16 @@ export interface Config {
   maxResponseBytes: number;
   userAgent: string;
   allowPrivateHosts: boolean;
+  /** HTTP transport: interface to bind (`HOST`). */
+  host: string;
+  /** HTTP transport: port to listen on (`PORT`). */
+  port: number;
+  /** HTTP transport: static bearer token (`SEARXNG_AUTH_TOKEN`); required for non-localhost binds, never logged. */
+  authToken?: string;
+  /** HTTP transport: extra `Host` hostnames beyond the localhost allowlist (`SEARXNG_ALLOWED_HOSTS`). */
+  allowedHosts: string[];
+  /** HTTP transport: extra `Origin` hostnames beyond the localhost allowlist (`SEARXNG_ALLOWED_ORIGINS`). */
+  allowedOrigins: string[];
 }
 
 type Env = Record<string, string | undefined>;
@@ -21,13 +34,27 @@ const DEFAULT_MAX_CHARS = 25_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
 const MIN_SHUTDOWN_TIMEOUT_MS = 100;
+const DEFAULT_TRANSPORT: Transport = 'stdio';
+const DEFAULT_HTTP_HOST = '127.0.0.1';
+const DEFAULT_HTTP_PORT = 3000;
+const MAX_PORT = 65_535;
+/** Hosts considered local: only these may serve HTTP without an auth token. */
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
 
-function intEnv(env: Env, key: string, fallback: number, warn: Warn, min = 1): number {
+function intEnv(
+  env: Env,
+  key: string,
+  fallback: number,
+  warn: Warn,
+  min = 1,
+  max = Number.POSITIVE_INFINITY,
+): number {
   const raw = env[key];
   if (raw === undefined || raw.trim() === '') return fallback;
   const value = Number(raw);
-  if (Number.isFinite(value) && value >= min) return Math.floor(value);
-  warn(`${key}: ignoring "${raw.trim()}" (expected an integer >= ${min}), using ${fallback}`);
+  const range = max === Number.POSITIVE_INFINITY ? `>= ${min}` : `between ${min} and ${max}`;
+  if (Number.isFinite(value) && value >= min && value <= max) return Math.floor(value);
+  warn(`${key}: ignoring "${raw.trim()}" (expected an integer ${range}), using ${fallback}`);
   return fallback;
 }
 
@@ -79,8 +106,29 @@ function urlEnv(env: Env, key: string, fallback: string, warn: Warn): string {
   return `${url.origin}${path === '/' ? '' : path}`;
 }
 
+function listEnv(env: Env, key: string): string[] {
+  const raw = env[key];
+  if (raw === undefined) return [];
+  return raw
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+function transportEnv(env: Env, warn: Warn): Transport {
+  const raw = env.SEARXNG_TRANSPORT;
+  if (raw === undefined || raw.trim() === '') return DEFAULT_TRANSPORT;
+  const value = raw.trim().toLowerCase();
+  if (value === 'stdio' || value === 'http') return value;
+  warn(
+    `SEARXNG_TRANSPORT: ignoring "${raw.trim()}" (expected "stdio" or "http"), using ${DEFAULT_TRANSPORT}`,
+  );
+  return DEFAULT_TRANSPORT;
+}
+
 export function loadConfig(env: Env, version: string, warn: Warn = () => {}): Config {
   const config: Config = {
+    transport: transportEnv(env, warn),
     searxngUrl: urlEnv(env, 'SEARXNG_URL', DEFAULT_SEARXNG_URL, warn),
     searxngTimeoutMs: intEnv(env, 'SEARXNG_TIMEOUT_MS', DEFAULT_SEARXNG_TIMEOUT_MS, warn),
     fetchTimeoutMs: intEnv(env, 'FETCH_TIMEOUT_MS', DEFAULT_FETCH_TIMEOUT_MS, warn),
@@ -95,8 +143,22 @@ export function loadConfig(env: Env, version: string, warn: Warn = () => {}): Co
     maxResponseBytes: intEnv(env, 'MAX_RESPONSE_BYTES', DEFAULT_MAX_RESPONSE_BYTES, warn),
     userAgent: strEnv(env, 'USER_AGENT', `searxng-mcp-server/${version}`),
     allowPrivateHosts: boolEnv(env, 'ALLOW_PRIVATE_HOSTS', false, warn),
+    host: strEnv(env, 'HOST', DEFAULT_HTTP_HOST),
+    port: intEnv(env, 'PORT', DEFAULT_HTTP_PORT, warn, 1, MAX_PORT),
+    allowedHosts: listEnv(env, 'SEARXNG_ALLOWED_HOSTS'),
+    allowedOrigins: listEnv(env, 'SEARXNG_ALLOWED_ORIGINS'),
   };
   if (env.SEARXNG_USERNAME) config.searxngUsername = env.SEARXNG_USERNAME;
   if (env.SEARXNG_PASSWORD) config.searxngPassword = env.SEARXNG_PASSWORD;
+  if (env.SEARXNG_AUTH_TOKEN && env.SEARXNG_AUTH_TOKEN.trim() !== '') {
+    config.authToken = env.SEARXNG_AUTH_TOKEN;
+  }
+  // Unlike the warn-and-fallback parsing above, an insecure combination
+  // must not start the server at all.
+  if (config.transport === 'http' && !LOCAL_HOSTS.has(config.host) && !config.authToken) {
+    throw new Error(
+      `HOST=${config.host} binds to a non-localhost interface; set SEARXNG_AUTH_TOKEN or bind HOST to 127.0.0.1/localhost/::1`,
+    );
+  }
   return config;
 }
