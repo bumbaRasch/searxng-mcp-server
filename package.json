@@ -45,6 +45,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "inspector": "npx -y @modelcontextprotocol/inspector node dist/index.js"
   },
@@ -59,6 +60,7 @@
   "devDependencies": {
     "@types/node": "^26.6.2",
     "@types/turndown": "^5.0.6",
+    "@vitest/coverage-v8": "^5.0.1",
     "oxlint": "^1.83.0",
     "oxlint-tsgolint": "^7.0.2002",
     "prettier": "^3.9.8",

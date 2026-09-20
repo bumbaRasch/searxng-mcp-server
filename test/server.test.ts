@@ -1,13 +1,15 @@
 import { InMemoryTransport, type JSONRPCMessage } from '@modelcontextprotocol/server';
 import { describe, expect, it } from 'vitest';
 import { createServer } from '../src/server.js';
+import type { ToolDeps } from '../src/tools.js';
 import { TOOL_NAMES } from '../src/tools.js';
-import { makeConfig } from './helpers.js';
+import { asFetchLike, makeConfig } from './helpers.js';
 
 interface RpcResult {
   tools?: { name: string; outputSchema?: unknown; icons?: unknown[] }[];
   isError?: boolean;
   content?: { text?: string }[];
+  structuredContent?: { query?: string };
 }
 
 const INIT: JSONRPCMessage = {
@@ -30,8 +32,9 @@ const INITIALIZED: JSONRPCMessage = {
 async function rpc(
   requests: { id: number; method: string; params?: unknown }[],
   captureInit = false,
+  deps: ToolDeps = {},
 ): Promise<Map<number, RpcResult>> {
-  const server = createServer(makeConfig());
+  const server = createServer(makeConfig(), deps);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
 
@@ -128,5 +131,37 @@ describe('createServer wiring', () => {
     const call = responses.get(3);
     expect(call?.isError).toBe(true);
     expect(call?.content?.[0]?.text).toMatch(/Could not fetch/);
+  });
+
+  it('runs a successful tools/call with injected fetch over transport', async () => {
+    const fetchImpl = asFetchLike(async () =>
+      new Response(
+        JSON.stringify({
+          query: 'rust async',
+          results: [{ title: 't', url: 'https://r.test/x', content: 'c' }],
+          answers: [],
+          corrections: [],
+          infoboxes: [],
+          suggestions: [],
+          unresponsiveEngines: [],
+        }),
+        { status: 200 },
+      ),
+    );
+    const responses = await rpc(
+      [
+        {
+          id: 2,
+          method: 'tools/call',
+          params: { name: 'search', arguments: { query: 'rust async' } },
+        },
+      ],
+      false,
+      { fetchImpl },
+    );
+    const call = responses.get(2);
+    expect(call?.isError).toBeFalsy();
+    expect(call?.structuredContent?.query).toBe('rust async');
+    expect(call?.content?.[0]?.text).toContain('UNTRUSTED_WEB_CONTENT');
   });
 });
