@@ -19,6 +19,7 @@ import {
 import {
   handleFetch,
   handleImageSearch,
+  handleListEngines,
   handleMusicSearch,
   handleNewsSearch,
   handleSearch,
@@ -408,5 +409,32 @@ describe('ToolDeps lookup seam', () => {
     );
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toMatch(/10\.0\.0\.5|blocked|private/i);
+  });
+});
+
+describe('handleListEngines', () => {
+  it('returns the structured engine list', async () => {
+    const fetchImpl = asFetchLike(
+      async () =>
+        new Response(
+          JSON.stringify({
+            engines: { w: { name: 'wikipedia', enabled: true, categories: ['general'] } },
+          }),
+          { status: 200 },
+        ),
+    );
+    const result = await handleListEngines(config, {}, { fetchImpl });
+    expect(result.isError).toBeFalsy();
+    expect(JSON.stringify(result.structuredContent)).toContain('wikipedia');
+    expect(result.content[0]?.text).toContain('# SearXNG instance capabilities');
+  });
+
+  it('surfaces sanitized SearxngError on failure', async () => {
+    const fetchImpl = asFetchLike(async () => {
+      throw new Error('boom');
+    });
+    const result = await handleListEngines(config, {}, { fetchImpl });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/Could not reach SearXNG/);
   });
 });

@@ -4,6 +4,7 @@ import { fetchContent } from './fetch.js';
 import {
   formatFetchedPage,
   formatImageResults,
+  formatListEngines,
   formatMusicResults,
   formatNewsResults,
   formatSearchResults,
@@ -19,6 +20,8 @@ import {
   fetchOutput,
   imageSearchInput,
   imageSearchOutput,
+  listEnginesInput,
+  listEnginesOutput,
   musicSearchInput,
   musicSearchOutput,
   newsSearchInput,
@@ -35,12 +38,14 @@ import {
   type FetchInput,
   type FetchResult,
   type ImageSearchInput,
+  type ListEnginesInput,
   type MusicSearchInput,
   type NewsSearchInput,
   type SearchInput,
   type VideoSearchInput,
 } from './schemas.js';
 import {
+  listEngines,
   SearxngError,
   imageSearch,
   musicSearch,
@@ -150,6 +155,12 @@ export const handleMusicSearch = createCategoryHandler(
   formatMusicResults,
 );
 
+export const handleListEngines = createCategoryHandler(
+  'List engines failed',
+  (config, _args: ListEnginesInput, deps) => listEngines(config, { fetchImpl: deps.fetchImpl }),
+  formatListEngines,
+);
+
 /** Single source of truth for the tool name list (tests, e2e, registration). */
 export const TOOL_NAMES = [
   'search',
@@ -158,6 +169,7 @@ export const TOOL_NAMES = [
   'news_search',
   'video_search',
   'music_search',
+  'list_engines',
 ] as const;
 
 export function registerTools(server: McpServer, config: Config, deps: ToolDeps = {}): void {
@@ -249,5 +261,20 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
       icons: TOOL_ICONS,
     },
     (args) => handleMusicSearch(config, args, deps),
+  );
+
+  server.registerTool(
+    'list_engines',
+    {
+      title: 'SearXNG instance capabilities',
+      description: withUntrustedSuffix(
+        'List the engines and categories enabled on the connected SearXNG instance. Use it before searching to pick valid engines or categories.',
+      ),
+      inputSchema: listEnginesInput,
+      outputSchema: listEnginesOutput,
+      annotations: TOOL_ANNOTATIONS,
+      icons: TOOL_ICONS,
+    },
+    (args) => handleListEngines(config, args, deps),
   );
 }

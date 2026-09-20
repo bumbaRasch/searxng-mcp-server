@@ -264,3 +264,19 @@ export function toVideoSearchParams(input: VideoSearchInput): SearchParams {
 export function toMusicSearchParams(input: MusicSearchInput): SearchParams {
   return { ...mapCommonParams(input), categories: ['music'] };
 }
+
+export const listEnginesInput = z.object({});
+export type ListEnginesInput = z.infer<typeof listEnginesInput>;
+
+export const listEnginesOutput = z.object({
+  engines: z.array(
+    z.object({
+      name: z.string(),
+      categories: z.array(z.string()),
+    }),
+  ),
+  categories: z.array(z.string()),
+  counts: z.object({ engines: z.number(), categories: z.number() }),
+});
+export type ListEnginesResponse = z.infer<typeof listEnginesOutput>;
+export type ListEngineEntry = z.infer<(typeof listEnginesOutput.shape)['engines']['element']>;

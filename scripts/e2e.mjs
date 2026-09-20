@@ -187,6 +187,17 @@ async function main() {
       'music_search returns a results array',
     );
 
+    // 4e. list_engines against the live instance
+    const enginesCall = await request(serverProcess, 'tools/call', {
+      name: 'list_engines',
+      arguments: {},
+    });
+    assert(!enginesCall.error && !enginesCall.result?.isError, 'list_engines call succeeds');
+    assert(
+      (enginesCall.result?.structuredContent?.counts?.engines ?? 0) > 0,
+      `list_engines reports enabled engines (got ${enginesCall.result?.structuredContent?.counts?.engines ?? 0})`,
+    );
+
     // 5. SSRF guard: private address must be rejected
     const ssrfCall = await request(serverProcess, 'tools/call', {
       name: 'fetch_content',

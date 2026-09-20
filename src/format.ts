@@ -2,6 +2,7 @@ import {
   MAX_URLS_PER_INFOBOX,
   type FetchResult,
   type ImageSearchResponse,
+  type ListEnginesResponse,
   type MusicSearchResponse,
   type NewsSearchResponse,
   type SearchResponse,
@@ -210,4 +211,26 @@ export function formatMusicResults(response: MusicSearchResponse): string {
     if (meta.length > 0) lines.push(`_${meta.join(' · ')}_`);
     return lines;
   });
+}
+
+export function formatListEngines(response: ListEnginesResponse): string {
+  const byCategory = new Map<string, string[]>(response.categories.map((name) => [name, []]));
+  for (const engine of response.engines) {
+    for (const category of engine.categories) {
+      byCategory.get(category)?.push(engine.name);
+    }
+  }
+  const lines: string[] = [
+    '# SearXNG instance capabilities',
+    `${response.counts.engines} engines enabled across ${response.counts.categories} categories.`,
+  ];
+  for (const category of response.categories) {
+    const names = byCategory.get(category) ?? [];
+    if (names.length === 0) continue;
+    lines.push(
+      '',
+      `**${sanitizeMeta(category)}** (${names.length}): ${names.map(sanitizeMeta).join(', ')}`,
+    );
+  }
+  return lines.join('\n').trim();
 }

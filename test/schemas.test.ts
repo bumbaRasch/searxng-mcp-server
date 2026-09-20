@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   imageSearchInput,
   imageSearchOutput,
+  listEnginesInput,
+  listEnginesOutput,
   musicSearchInput,
   musicSearchOutput,
   newsSearchInput,
@@ -215,5 +217,23 @@ describe('video/music output schemas validate their projections', () => {
         results: [{ ...ok.results[0], audioSrc: 'https://r.test/file.ogg', length: '3:21' }],
       }).success,
     ).toBe(true);
+  });
+});
+
+describe('listEngines schemas', () => {
+  it('input accepts empty args', () => {
+    expect(listEnginesInput.parse({})).toEqual({});
+  });
+
+  it('output validates a well-formed response and rejects malformed', () => {
+    const response = {
+      engines: [{ name: 'wikipedia', categories: ['general'] }],
+      categories: ['general'],
+      counts: { engines: 1, categories: 1 },
+    };
+    expect(listEnginesOutput.safeParse(response).success).toBe(true);
+    expect(listEnginesOutput.safeParse({ ...response, engines: [{ name: 'x' }] }).success).toBe(
+      false,
+    );
   });
 });

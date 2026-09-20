@@ -166,3 +166,53 @@ describe('createServer wiring', () => {
     expect(call?.content?.[0]?.text).toContain('UNTRUSTED_WEB_CONTENT');
   });
 });
+
+describe('every tool answers over transport', () => {
+  const fetchImpl = asFetchLike(async (url: string | URL | Request) => {
+    const target = String(url);
+    if (target.endsWith('/config')) {
+      return new Response(
+        JSON.stringify({
+          engines: { w: { name: 'wikipedia', enabled: true, categories: ['general'] } },
+        }),
+        { status: 200 },
+      );
+    }
+    if (target.includes('/search?')) {
+      return new Response(
+        JSON.stringify({
+          query: 'q',
+          results: [
+            { title: 't', url: 'https://r.test/x', content: 'c', img_src: 'https://i.test/x' },
+          ],
+        }),
+        { status: 200 },
+      );
+    }
+    return new Response(
+      '<html><body><article><h1>Doc</h1><p>word word word</p></article></body></html>',
+      { status: 200, headers: { 'content-type': 'text/html' } },
+    );
+  });
+
+  const args: Record<string, Record<string, unknown>> = {
+    search: { query: 'q' },
+    fetch_content: { url: 'https://example.test/doc' },
+    image_search: { query: 'q' },
+    news_search: { query: 'q' },
+    video_search: { query: 'q' },
+    music_search: { query: 'q' },
+    list_engines: {},
+  };
+
+  it.each([...TOOL_NAMES])('%s returns a result over the transport', async (name) => {
+    const responses = await rpc(
+      [{ id: 2, method: 'tools/call', params: { name, arguments: args[name] } }],
+      false,
+      { fetchImpl },
+    );
+    const call = responses.get(2);
+    expect(call?.isError).toBeFalsy();
+    expect((call?.content?.[0]?.text ?? '').length).toBeGreaterThan(0);
+  });
+});

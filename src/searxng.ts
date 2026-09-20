@@ -3,6 +3,8 @@ import type { Config } from './config.js';
 import { isRedirect, readCapped, type FetchLike } from './http.js';
 import {
   MAX_URLS_PER_INFOBOX,
+  type ListEngineEntry,
+  type ListEnginesResponse,
   type ImageSearchResponse,
   type ImageSearchResult,
   type MusicSearchResponse,
@@ -217,14 +219,7 @@ async function fetchSearchJson(
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   const fetchImpl: FetchLike = opts.fetchImpl ?? (fetch as FetchLike);
   const url = `${config.searxngUrl}/search?${buildSearchParams(params).toString()}`;
-  const headers: Record<string, string> = {
-    'User-Agent': config.userAgent,
-    Accept: 'application/json',
-  };
-  if (config.searxngUsername) {
-    const credentials = `${config.searxngUsername}:${config.searxngPassword ?? ''}`;
-    headers.Authorization = `Basic ${Buffer.from(credentials).toString('base64')}`;
-  }
+  const headers = instanceHeaders(config);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), config.searxngTimeoutMs);
@@ -482,4 +477,117 @@ export async function musicSearch(
 ): Promise<MusicSearchResponse> {
   const raw = await fetchSearchJson(config, params, opts);
   return mapMusicResponse(raw, params.maxResults);
+}
+
+function instanceHeaders(config: Config): Record<string, string> {
+  const headers: Record<string, string> = {
+    'User-Agent': config.userAgent,
+    Accept: 'application/json',
+  };
+  if (config.searxngUsername) {
+    const credentials = `${config.searxngUsername}:${config.searxngPassword ?? ''}`;
+    headers.Authorization = `Basic ${Buffer.from(credentials).toString('base64')}`;
+  }
+  return headers;
+}
+
+const MAX_ENGINES = 100;
+
+async function fetchConfigJson(
+  config: Config,
+  opts: { fetchImpl?: FetchLike | undefined } = {},
+): Promise<unknown> {
+  // Cast bridges @types/node's vendored RequestInit and undici's own types
+  // (two structural copies of the same dispatcher interface).
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  const fetchImpl: FetchLike = opts.fetchImpl ?? (fetch as FetchLike);
+  const url = `${config.searxngUrl}/config`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), config.searxngTimeoutMs);
+  try {
+    let response: Awaited<ReturnType<FetchLike>>;
+    try {
+      response = await fetchImpl(url, {
+        headers: instanceHeaders(config),
+        signal: controller.signal,
+        redirect: 'manual',
+      });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new SearxngError(`SearXNG timed out after ${config.searxngTimeoutMs} ms.`, {
+          cause: error,
+        });
+      }
+      throw new SearxngError(
+        `Could not reach SearXNG at ${origin(config.searxngUrl)}. Is the container running and is SEARXNG_URL correct?`,
+        { cause: error },
+      );
+    }
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
+      if (isRedirect(response.status)) {
+        throw new SearxngError(
+          `SearXNG answered with an HTTP ${response.status} redirect. SEARXNG_URL must point directly at the instance.`,
+        );
+      }
+      throw new SearxngError(
+        `Could not read the SearXNG instance configuration (HTTP ${response.status}). The /config endpoint may be disabled.`,
+      );
+    }
+    let body: string;
+    try {
+      body = await readCapped(response, config.maxResponseBytes);
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new SearxngError(`SearXNG timed out after ${config.searxngTimeoutMs} ms.`, {
+          cause: error,
+        });
+      }
+      throw new SearxngError(
+        error instanceof Error ? error.message : 'SearXNG response could not be read.',
+        { cause: error },
+      );
+    }
+    try {
+      return JSON.parse(body);
+    } catch (error) {
+      throw new SearxngError('SearXNG returned a non-JSON configuration response.', {
+        cause: error,
+      });
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export function mapEnginesResponse(raw: unknown): ListEnginesResponse {
+  const source = isRecord(raw) && isRecord(raw.engines) ? raw.engines : {};
+  const categorySet = new Set<string>();
+  const entries: ListEngineEntry[] = [];
+  for (const engine of Object.values(source)) {
+    if (!isRecord(engine) || engine.enabled !== true) continue;
+    if (typeof engine.name !== 'string' || engine.name.trim() === '') continue;
+    const categories = asStringArray(engine.categories).slice(0, MAX_ARRAY_ITEMS);
+    for (const category of categories) categorySet.add(category);
+    entries.push({ name: engine.name, categories });
+  }
+  const sorted = entries.toSorted((a, b) => a.name.localeCompare(b.name));
+  const categories = [...categorySet]
+    .toSorted((a, b) => a.localeCompare(b))
+    .slice(0, MAX_ARRAY_ITEMS);
+  const engines = sorted.slice(0, MAX_ENGINES);
+  return {
+    engines,
+    categories,
+    counts: { engines: engines.length, categories: categories.length },
+  };
+}
+
+export async function listEngines(
+  config: Config,
+  opts: { fetchImpl?: FetchLike | undefined } = {},
+): Promise<ListEnginesResponse> {
+  const raw = await fetchConfigJson(config, opts);
+  return mapEnginesResponse(raw);
 }

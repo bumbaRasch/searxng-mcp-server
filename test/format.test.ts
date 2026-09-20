@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   formatFetchedPage,
   formatImageResults,
+  formatListEngines,
   formatMusicResults,
   formatNewsResults,
   formatSearchResults,
@@ -444,5 +445,34 @@ describe('formatMusicResults', () => {
     });
     expect(md).not.toContain('Audio:');
     expect(md.split('UNTRUSTED_WEB_CONTENT>>>').length - 1).toBe(1);
+  });
+});
+
+describe('formatListEngines', () => {
+  it('renders grouped categories with counts', () => {
+    const text = formatListEngines({
+      engines: [
+        { name: 'bing', categories: ['general'] },
+        { name: 'duckduckgo', categories: ['general', 'it'] },
+      ],
+      categories: ['general', 'it'],
+      counts: { engines: 2, categories: 2 },
+    });
+    expect(text).toContain('# SearXNG instance capabilities');
+    expect(text).toContain('2 engines enabled across 2 categories.');
+    expect(text).toContain('**general** (2): bing, duckduckgo');
+    expect(text).toContain('**it** (1): duckduckgo');
+  });
+});
+
+describe('formatListEngines edge cases', () => {
+  it('skips categories without engines', () => {
+    const text = formatListEngines({
+      engines: [{ name: 'bing', categories: ['general'] }],
+      categories: ['general', 'empty'],
+      counts: { engines: 1, categories: 2 },
+    });
+    expect(text).toContain('**general** (1): bing');
+    expect(text).not.toContain('empty');
   });
 });

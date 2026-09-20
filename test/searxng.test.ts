@@ -7,6 +7,8 @@ import {
   mapNewsResponse,
   mapSearchResponse,
   mapVideoResponse,
+  listEngines,
+  mapEnginesResponse,
   musicSearch,
   newsSearch,
   search,
@@ -31,7 +33,7 @@ import {
   type NewsSearchResponse,
   type VideoSearchResponse,
 } from '../src/schemas.js';
-import { jsonResponse, makeConfig } from './helpers.js';
+import { asFetchLike, jsonResponse, makeConfig } from './helpers.js';
 import type { FetchLike } from '../src/http.js';
 
 describe('buildSearchParams', () => {
@@ -701,5 +703,108 @@ describe('fetchSearchJson robustness', () => {
     await expect(search(config, params, { fetchImpl })).rejects.toThrow(
       /429.*limiter|limiter.*429/is,
     );
+  });
+});
+
+describe('mapEnginesResponse', () => {
+  const raw = {
+    engines: {
+      a: { name: 'zeta', enabled: true, categories: ['general', 'it'] },
+      b: { name: 'alpha', enabled: true, categories: ['general'] },
+      c: { name: 'disabled-one', enabled: false, categories: ['general'] },
+      d: { enabled: true, categories: ['general'] },
+      e: { name: 'beta', enabled: true, categories: [7, 'it'] },
+      f: { name: '   ', enabled: true, categories: ['general'] },
+    },
+  };
+
+  it('keeps enabled engines only, sorted, with clean categories', () => {
+    const mapped = mapEnginesResponse(raw);
+    expect(mapped.engines.map((engine) => engine.name)).toEqual(['alpha', 'beta', 'zeta']);
+    expect(mapped.categories).toEqual(['general', 'it']);
+    expect(mapped.counts).toEqual({ engines: 3, categories: 2 });
+  });
+
+  it('drops non-string categories from entries', () => {
+    const mapped = mapEnginesResponse(raw);
+    expect(mapped.engines.find((engine) => engine.name === 'beta')?.categories).toEqual(['it']);
+  });
+
+  it('caps engines and reports post-cap counts', () => {
+    const many = {
+      engines: Object.fromEntries(
+        Array.from({ length: 150 }, (_, i) => [
+          i,
+          { name: `e${i}`, enabled: true, categories: ['general'] },
+        ]),
+      ),
+    };
+    const mapped = mapEnginesResponse(many);
+    expect(mapped.engines).toHaveLength(100);
+    expect(mapped.counts.engines).toBe(100);
+  });
+
+  it('tolerates garbage input', () => {
+    expect(mapEnginesResponse(null)).toEqual({
+      engines: [],
+      categories: [],
+      counts: { engines: 0, categories: 0 },
+    });
+  });
+});
+
+describe('listEngines', () => {
+  it('fetches /config and maps enabled engines', async () => {
+    let calledUrl = '';
+    const fetchImpl = asFetchLike(async (url: string) => {
+      calledUrl = url;
+      return jsonResponse({
+        engines: { w: { name: 'wikipedia', enabled: true, categories: ['general'] } },
+      });
+    });
+    const result = await listEngines(config, { fetchImpl });
+    expect(calledUrl).toBe('http://searx.test:8888/config');
+    expect(result.counts).toEqual({ engines: 1, categories: 1 });
+    expect(result.engines[0]?.name).toBe('wikipedia');
+  });
+
+  it('reports a config-specific error on 403', async () => {
+    const fetchImpl = asFetchLike(async () => new Response('no', { status: 403 }));
+    await expect(listEngines(config, { fetchImpl })).rejects.toThrow(/config/i);
+  });
+});
+
+describe('listEngines error paths', () => {
+  it('refuses redirect responses', async () => {
+    const fetchImpl = asFetchLike(
+      async () => new Response(null, { status: 302, headers: { location: '/x' } }),
+    );
+    await expect(listEngines(config, { fetchImpl })).rejects.toThrow(/redirect/);
+  });
+
+  it('rejects non-JSON configuration bodies', async () => {
+    const fetchImpl = asFetchLike(async () => new Response('<html>no</html>', { status: 200 }));
+    await expect(listEngines(config, { fetchImpl })).rejects.toThrow(/non-JSON/);
+  });
+
+  it('reports timeouts as timeouts', async () => {
+    const fetchImpl = asFetchLike(
+      (_url: unknown, init?: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('aborted', 'AbortError')),
+          );
+        }),
+    );
+    await expect(listEngines({ ...config, searxngTimeoutMs: 10 }, { fetchImpl })).rejects.toThrow(
+      /timed out after 10 ms/,
+    );
+  });
+});
+
+describe('listEngines body limits', () => {
+  it('rejects oversized configuration bodies', async () => {
+    const fetchImpl = asFetchLike(async () => new Response('x'.repeat(200_000), { status: 200 }));
+    await expect(listEngines(config, { fetchImpl })).rejects.toThrow(/byte limit/);
   });
 });
