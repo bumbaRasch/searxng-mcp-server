@@ -2,6 +2,11 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -11,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node: [22, 24, 26]
+        node: ['22.19.0', 24, 26]
     steps:
       # Actions are pinned to commit SHAs (tags are movable).
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -27,3 +32,35 @@ jobs:
       - run: pnpm run typecheck
       - run: pnpm test
       - run: pnpm run build
+      - run: pnpm pack
+      - run: tar -tzf searxng-mcp-server-*.tgz | grep -E 'dist/index\.js'
+      - run: tar -tzf searxng-mcp-server-*.tgz | grep -E '(README\.md|LICENSE)'
+  e2e:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      # Actions are pinned to commit SHAs (tags are movable).
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22.19.0'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      # docker-compose.yml requires SEARXNG_SECRET from a .env file.
+      - run: printf 'SEARXNG_SECRET=%s\n' "$(openssl rand -hex 32)" > .env
+      - run: docker compose up -d
+      - name: Wait for the SearXNG JSON API
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS 'http://127.0.0.1:8888/search?q=test&format=json' >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo 'SearXNG did not become ready in 60s' >&2
+          exit 1
+      - run: node scripts/e2e.mjs
+        env:
+          SEARXNG_URL: http://127.0.0.1:8888

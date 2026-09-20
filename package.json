@@ -1,7 +1,7 @@
 {
-  "name": "searxng-mcp-ts",
+  "name": "searxng-mcp-server",
   "version": "0.1.0",
-  "description": "MCP server for a self-hosted SearXNG instance: web search and page fetch.",
+  "description": "MCP server for a self-hosted SearXNG instance: web, image, news, video and music search plus page fetch.",
   "type": "module",
   "license": "MIT",
   "author": "Dimitri Pisarev",
@@ -19,10 +19,12 @@
     "node": ">=22.19.0"
   },
   "bin": {
-    "searxng-mcp-ts": "dist/index.js"
+    "searxng-mcp-server": "dist/index.js"
   },
   "files": [
     "dist",
+    "docs/design.md",
+    "docs/extending.md",
     "README.md",
     "LICENSE"
   ],
@@ -30,7 +32,7 @@
     "prebuild": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "prepublishOnly": "pnpm build",
+    "prepublishOnly": "pnpm lint && pnpm lint:types && pnpm typecheck && pnpm test && pnpm build",
     "lint": "oxlint",
     "lint:types": "oxlint --type-aware",
     "format": "prettier --write .",
