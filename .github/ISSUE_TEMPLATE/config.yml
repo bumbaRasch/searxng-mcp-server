@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Setup or usage question
+    url: https://github.com/bumbaRasch/searxng-mcp-server/discussions/new?category=q-a
+    about: Configuring the server or your MCP client — ask in Discussions, not issues
+  - name: 'SearXNG returned 403 / Could not reach SearXNG'
+    url: https://github.com/bumbaRasch/searxng-mcp-server#troubleshooting
+    about: Almost always a configuration issue — check the Troubleshooting section first
