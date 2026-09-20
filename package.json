@@ -33,6 +33,7 @@
     "docs/design.md",
     "docs/extending.md",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {

@@ -8,7 +8,7 @@ Self-hosted [SearXNG](https://github.com/searxng/searxng) metasearch for MCP cli
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](./LICENSE)
 [![CI](https://github.com/bumbaRasch/searxng-mcp-server/actions/workflows/ci.yml/badge.svg?style=flat-square)](https://github.com/bumbaRasch/searxng-mcp-server/actions/workflows/ci.yml)
 
-[Documentation](docs/design.md) · [npm](https://www.npmjs.com/package/searxng-mcp-server) · [SearXNG](https://github.com/searxng/searxng) · [Report an issue](https://github.com/bumbaRasch/searxng-mcp-server/issues)
+[Documentation](docs/design.md) · [Changelog](CHANGELOG.md) · [npm](https://www.npmjs.com/package/searxng-mcp-server) · [SearXNG](https://github.com/searxng/searxng) · [Report an issue](https://github.com/bumbaRasch/searxng-mcp-server/issues)
 
 ## Why
 
