@@ -21,7 +21,7 @@ body:
     id: expected
     attributes:
       label: What did you expect to happen?
-      placeholder: The same call should return ranked results.
+      placeholder: The same call should return ranked results
     validations:
       required: true
   - type: textarea
@@ -70,7 +70,7 @@ body:
     id: logs
     attributes:
       label: Relevant log output
-      description: The server logs to stderr. If you don't know how to view them, leave this blank — see the Troubleshooting section.
+      description: The server logs to stderr. If you don't know how to view them, leave this blank — see the [Troubleshooting section](https://github.com/bumbaRasch/searxng-mcp-server#troubleshooting).
       render: shell
   - type: checkboxes
     id: checks
