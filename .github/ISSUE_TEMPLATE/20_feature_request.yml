@@ -1,0 +1,36 @@
+name: Feature request
+description: Suggest a new capability for the server
+title: '[Feature]: '
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For a new search tool or media category, use the **Tool request** form instead.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Optional — but it helps us understand the motivation.
+      placeholder: I'm always frustrated when [...]
+  - type: textarea
+    id: solution
+    attributes:
+      label: Describe the solution you'd like
+      placeholder: I want to be able to [...]
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Describe alternatives you've considered
+      description: Optional.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and found no duplicate
+          required: true
+        - label: This is not a request for a new search tool or media category
+          required: true
