@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
-  buildSearchQuery,
+  buildSearchParams,
   imageSearch,
   mapImageResponse,
   mapMusicResponse,
@@ -20,6 +20,10 @@ import {
   musicSearchOutput,
   newsSearchInput,
   newsSearchOutput,
+  toImageSearchParams,
+  toMusicSearchParams,
+  toNewsSearchParams,
+  toVideoSearchParams,
   videoSearchInput,
   videoSearchOutput,
   type ImageSearchResponse,
@@ -30,15 +34,15 @@ import {
 import { jsonResponse, makeConfig } from './helpers.js';
 import type { FetchLike } from '../src/http.js';
 
-describe('buildSearchQuery', () => {
+describe('buildSearchParams', () => {
   it('always sets q and format=json', () => {
-    const qs = buildSearchQuery({ query: 'hello world' });
+    const qs = buildSearchParams({ query: 'hello world' });
     expect(qs.get('q')).toBe('hello world');
     expect(qs.get('format')).toBe('json');
   });
 
   it('joins array params with commas and omits unset params', () => {
-    const qs = buildSearchQuery({
+    const qs = buildSearchParams({
       query: 'q',
       categories: ['general', 'news'],
       engines: ['google', 'brave'],
@@ -56,7 +60,7 @@ describe('buildSearchQuery', () => {
   });
 
   it('omits empty arrays', () => {
-    const qs = buildSearchQuery({ query: 'q', categories: [], engines: [] });
+    const qs = buildSearchParams({ query: 'q', categories: [], engines: [] });
     expect(qs.has('categories')).toBe(false);
     expect(qs.has('engines')).toBe(false);
   });
@@ -193,6 +197,22 @@ describe('mapSearchResponse', () => {
     expect(res.results[0]?.content.length).toBeLessThanOrEqual(1000);
     expect(res.results[0]?.content).toHaveLength(1000);
     expect(res.results[0]?.content.endsWith('…')).toBe(true);
+  });
+
+  it('drops web results without a usable URL', () => {
+    const mapped = mapSearchResponse(
+      {
+        query: 'q',
+        results: [
+          null,
+          { title: 'no url' },
+          { title: 'ok', url: 'https://r.test/x', content: 'c' },
+        ],
+      },
+      5,
+    );
+    expect(mapped.results).toHaveLength(1);
+    expect(mapped.results[0]?.url).toBe('https://r.test/x');
   });
 
   it('is defensive about malformed input', () => {
@@ -447,15 +467,19 @@ describe('imageSearch/newsSearch clients', () => {
     }) as unknown as FetchLike;
     const res: ImageSearchResponse = await imageSearch(
       config,
-      imageSearchInput.parse({ query: 'cats' }),
+      toImageSearchParams(imageSearchInput.parse({ query: 'cats' })),
       { fetchImpl },
     );
     expect(seen[0]).toContain('categories=images');
     expect(res.results[0]?.imgSrc).toBe('https://i.test/c.png');
 
-    const newsRes = await newsSearch(config, newsSearchInput.parse({ query: 'cats' }), {
-      fetchImpl,
-    });
+    const newsRes = await newsSearch(
+      config,
+      toNewsSearchParams(newsSearchInput.parse({ query: 'cats' })),
+      {
+        fetchImpl,
+      },
+    );
     expect(seen[1]).toContain('categories=news');
     expect(newsRes.results[0]?.title).toBe('Cat');
   });
@@ -469,9 +493,13 @@ describe('imageSearch/newsSearch clients', () => {
           { title: '2', url: 'u2', img_src: 'i2' },
         ],
       })) as unknown as FetchLike;
-    const res = await imageSearch(config, imageSearchInput.parse({ query: 'q', max_results: 1 }), {
-      fetchImpl,
-    });
+    const res = await imageSearch(
+      config,
+      toImageSearchParams(imageSearchInput.parse({ query: 'q', max_results: 1 })),
+      {
+        fetchImpl,
+      },
+    );
     expect(res.results).toHaveLength(1);
   });
 });
@@ -508,7 +536,7 @@ describe("publishedDate 'None' quirk is filtered everywhere", () => {
   });
 });
 
-describe('pickLength behavior via mapVideoResponse/mapMusicResponse', () => {
+describe('normalizeDuration behavior via mapVideoResponse/mapMusicResponse', () => {
   const base = { query: 'q', suggestions: [], unresponsive_engines: [] };
 
   it('keeps display strings and converts numeric seconds', () => {
@@ -587,7 +615,9 @@ describe('videoSearch/musicSearch clients', () => {
     }) as unknown as FetchLike;
     const video: VideoSearchResponse = await videoSearch(
       config,
-      videoSearchInput.parse({ query: 'q', time_range: 'month', max_results: 1 }),
+      toVideoSearchParams(
+        videoSearchInput.parse({ query: 'q', time_range: 'month', max_results: 1 }),
+      ),
       { fetchImpl },
     );
     expect(seen[0]).toContain('categories=videos');
@@ -597,12 +627,68 @@ describe('videoSearch/musicSearch clients', () => {
 
     const music: MusicSearchResponse = await musicSearch(
       config,
-      musicSearchInput.parse({ query: 'q' }),
+      toMusicSearchParams(musicSearchInput.parse({ query: 'q' })),
       {
         fetchImpl,
       },
     );
     expect(seen[1]).toContain('categories=music');
     expect(music.results[0]?.title).toBe('1');
+  });
+});
+
+describe('mapCategoryResponse limit semantics', () => {
+  const good = { title: 't', url: 'https://r.test/x', img_src: 'https://img.test/x.png' };
+  const raw = { query: 'q', results: [null, good, good, good] }; // garbage first
+
+  it('image: garbage consumes no maxResults budget', () => {
+    expect(mapImageResponse(raw, 2).results).toHaveLength(2); // already filter-first
+  });
+
+  it('news: after unification, garbage consumes no budget either', () => {
+    const results = mapNewsResponse(raw, 2).results;
+    expect(results).toHaveLength(2);
+    expect(results.every((result) => result.url !== '')).toBe(true);
+  });
+});
+
+describe('fetchSearchJson robustness', () => {
+  const params = { query: 'test', maxResults: 5 };
+
+  it('refuses redirect responses with an actionable message', async () => {
+    const fetchImpl = (async () =>
+      new Response(null, {
+        status: 302,
+        headers: { location: 'http://elsewhere.test/' },
+      })) as unknown as FetchLike;
+    await expect(search(config, params, { fetchImpl })).rejects.toThrow(/redirect/i);
+  });
+
+  it('reports timeouts as timeouts, not unreachability', async () => {
+    const fetchImpl = ((_url: unknown, init?: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () =>
+          reject(new DOMException('This operation was aborted', 'AbortError')),
+        );
+      })) as unknown as FetchLike;
+    await expect(
+      search({ ...config, searxngTimeoutMs: 10 }, params, { fetchImpl }),
+    ).rejects.toThrow(/timed out after 10 ms/i);
+  });
+
+  it('cancels the body of non-2xx responses', async () => {
+    const response = new Response('boom', { status: 500 });
+    const cancel = response.body ? vi.spyOn(response.body, 'cancel') : undefined;
+    const fetchImpl = (async () => response) as unknown as FetchLike;
+    await expect(search(config, params, { fetchImpl })).rejects.toThrow(/500/);
+    expect(cancel).toHaveBeenCalled();
+  });
+
+  it('hints at the limiter on 429', async () => {
+    const fetchImpl = (async () =>
+      new Response('slow down', { status: 429 })) as unknown as FetchLike;
+    await expect(search(config, params, { fetchImpl })).rejects.toThrow(
+      /429.*limiter|limiter.*429/is,
+    );
   });
 });

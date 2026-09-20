@@ -1,20 +1,13 @@
 import { URLSearchParams } from 'node:url';
 import type { Config } from './config.js';
-import { readCapped, type FetchLike } from './http.js';
+import { isRedirect, readCapped, type FetchLike } from './http.js';
 import {
   DEFAULT_MAX_RESULTS,
   MAX_URLS_PER_INFOBOX,
-  toImageSearchParams,
-  toMusicSearchParams,
-  toNewsSearchParams,
-  toVideoSearchParams,
-  type ImageSearchInput,
   type ImageSearchResponse,
   type ImageSearchResult,
-  type MusicSearchInput,
   type MusicSearchResponse,
   type MusicSearchResult,
-  type NewsSearchInput,
   type NewsSearchResponse,
   type NewsSearchResult,
   type SearchAnswer,
@@ -22,7 +15,6 @@ import {
   type SearchParams,
   type SearchResponse,
   type SearchResult,
-  type VideoSearchInput,
   type VideoSearchResponse,
   type VideoSearchResult,
 } from './schemas.js';
@@ -44,7 +36,7 @@ export class SearxngError extends Error {
   }
 }
 
-export function buildSearchQuery(params: SearchParams): URLSearchParams {
+export function buildSearchParams(params: SearchParams): URLSearchParams {
   const qs = new URLSearchParams();
   qs.set('q', params.query);
   qs.set('format', 'json');
@@ -80,6 +72,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function truncateText(text: string, max: number): string {
   if (text.length <= max) return text;
+  // max <= 1 leaves no room for the ellipsis, so hard-slice instead.
   return max <= 1 ? text.slice(0, max) : `${text.slice(0, max - 1)}…`;
 }
 
@@ -91,13 +84,14 @@ function pickPublishedDate(value: unknown): string | undefined {
 }
 
 /** Upstream `length` is either a display string ("14:54") or numeric seconds. */
-function pickLength(value: unknown): string | undefined {
+function normalizeDuration(value: unknown): string | undefined {
   if (typeof value === 'string') {
     const trimmed = value.trim();
     return trimmed === '' ? undefined : truncateText(trimmed, MAX_MEDIA_FIELD_CHARS);
   }
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
     const total = Math.round(value);
+    // Sub-second durations round to zero; drop rather than render "0:00".
     if (total === 0) return undefined;
     const hours = Math.floor(total / 3600);
     const minutes = Math.floor((total % 3600) / 60);
@@ -156,11 +150,13 @@ function projectUnresponsive(value: unknown): [string, string] | null {
   return [engine, message];
 }
 
-function projectResult(value: unknown): SearchResult {
+function projectResult(value: unknown): SearchResult | null {
   const raw: RawResult = isRecord(value) ? value : {};
+  const url = typeof raw.url === 'string' ? raw.url : '';
+  if (url === '') return null; // a result without a URL is unusable
   const result: SearchResult = {
     title: typeof raw.title === 'string' ? raw.title : '',
-    url: typeof raw.url === 'string' ? raw.url : '',
+    url,
     content: truncateText(
       typeof raw.content === 'string' ? raw.content : '',
       MAX_RESULT_CONTENT_CHARS,
@@ -178,22 +174,26 @@ function projectResult(value: unknown): SearchResult {
 
 export function mapSearchResponse(raw: unknown, maxResults: number): SearchResponse {
   const data = isRecord(raw) ? raw : {};
-  const rawResults: unknown[] = Array.isArray(data.results) ? data.results : [];
+  const { query, results, suggestions, unresponsiveEngines } = mapCategoryResponse(
+    raw,
+    maxResults,
+    projectResult,
+  );
   const answers = (Array.isArray(data.answers) ? data.answers : [])
     .map(projectAnswer)
     .filter((item): item is SearchAnswer => item !== null)
     .slice(0, MAX_ARRAY_ITEMS);
   return {
-    query: typeof data.query === 'string' ? data.query : '',
-    results: rawResults.slice(0, Math.max(0, maxResults)).map(projectResult),
+    query,
+    results,
     answers,
     corrections: asStringArray(data.corrections).slice(0, MAX_ARRAY_ITEMS),
     infoboxes: (Array.isArray(data.infoboxes) ? data.infoboxes : [])
       .map(projectInfobox)
       .filter((item): item is SearchInfobox => item !== null)
       .slice(0, MAX_ARRAY_ITEMS),
-    suggestions: asStringArray(data.suggestions).slice(0, MAX_ARRAY_ITEMS),
-    unresponsiveEngines: projectUnresponsiveList(data),
+    suggestions,
+    unresponsiveEngines,
   };
 }
 
@@ -201,21 +201,23 @@ function origin(url: string): string {
   try {
     return new URL(url).origin;
   } catch {
-    return 'the configured instance';
+    return 'the configured SEARXNG URL';
   }
 }
 
-/** Shared search cycle: URL + auth + timeout + byte cap + status/JSON errors. */
 async function fetchSearchJson(
   config: Config,
   params: SearchParams,
-  opts: { fetchImpl?: FetchLike } = {},
+  opts: { fetchImpl?: FetchLike | undefined } = {},
 ): Promise<unknown> {
-  // No SSRF guard here on purpose: SEARXNG_URL is operator-provided trusted
-  // configuration (unlike fetch_content's arbitrary URLs), and the search
-  // path never follows redirects to untrusted hosts.
-  const fetchImpl: FetchLike = opts.fetchImpl ?? fetch;
-  const url = `${config.searxngUrl}/search?${buildSearchQuery(params).toString()}`;
+  // No SSRF guard by design: SEARXNG_URL is operator-trusted config; redirects
+  // are refused so a compromised instance cannot pivot us onto internal hosts.
+
+  // Cast bridges @types/node's vendored RequestInit and undici's own types
+  // (two structural copies of the same dispatcher interface).
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  const fetchImpl: FetchLike = opts.fetchImpl ?? (fetch as FetchLike);
+  const url = `${config.searxngUrl}/search?${buildSearchParams(params).toString()}`;
   const headers: Record<string, string> = {
     'User-Agent': config.userAgent,
     Accept: 'application/json',
@@ -230,32 +232,59 @@ async function fetchSearchJson(
   try {
     let response: Awaited<ReturnType<FetchLike>>;
     try {
-      response = await fetchImpl(url, { headers, signal: controller.signal });
+      response = await fetchImpl(url, {
+        headers,
+        signal: controller.signal,
+        redirect: 'manual',
+      });
     } catch (error) {
+      if (controller.signal.aborted) {
+        throw new SearxngError(`SearXNG timed out after ${config.searxngTimeoutMs} ms.`, {
+          cause: error,
+        });
+      }
       throw new SearxngError(
         `Could not reach SearXNG at ${origin(config.searxngUrl)}. Is the container running and is SEARXNG_URL correct?`,
         { cause: error },
       );
     }
 
-    if (response.status === 403) {
-      throw new SearxngError(
-        'SearXNG returned 403: the JSON API is disabled. Add "json" to search.formats in settings.yml.',
-      );
-    }
-    if (response.status === 400) {
-      throw new SearxngError(
-        'SearXNG rejected the query parameters (400). Check categories, engines, language, time_range and safesearch.',
-      );
-    }
     if (!response.ok) {
-      throw new SearxngError(`SearXNG request failed with HTTP ${response.status}.`);
+      await response.body?.cancel().catch(() => undefined);
+      if (response.status === 403) {
+        throw new SearxngError(
+          'SearXNG returned 403: the JSON API is disabled. Add "json" to search.formats in settings.yml.',
+        );
+      }
+      if (response.status === 400) {
+        throw new SearxngError(
+          'SearXNG rejected the query parameters (400). Check categories, engines, language, time_range and safesearch.',
+        );
+      }
+      if (response.status === 429) {
+        throw new SearxngError(
+          'SearXNG returned 429: rate limited. Check the limiter settings in settings.yml.',
+        );
+      }
+      if (isRedirect(response.status)) {
+        throw new SearxngError(
+          `SearXNG answered with an HTTP ${response.status} redirect. SEARXNG_URL must point directly at the instance.`,
+        );
+      }
+      throw new SearxngError(
+        `SearXNG request failed with HTTP ${response.status} at ${origin(config.searxngUrl)}.`,
+      );
     }
 
     let body: string;
     try {
       body = await readCapped(response, config.maxResponseBytes);
     } catch (error) {
+      if (controller.signal.aborted) {
+        throw new SearxngError(`SearXNG timed out after ${config.searxngTimeoutMs} ms.`, {
+          cause: error,
+        });
+      }
       throw new SearxngError(
         error instanceof Error ? error.message : 'SearXNG response could not be read.',
         { cause: error },
@@ -278,7 +307,7 @@ async function fetchSearchJson(
 export async function search(
   config: Config,
   params: SearchParams,
-  opts: { fetchImpl?: FetchLike } = {},
+  opts: { fetchImpl?: FetchLike | undefined } = {},
 ): Promise<SearchResponse> {
   const raw = await fetchSearchJson(config, params, opts);
   return mapSearchResponse(raw, params.maxResults ?? DEFAULT_MAX_RESULTS);
@@ -326,27 +355,39 @@ function projectUnresponsiveList(data: Record<string, unknown>): [string, string
     .slice(0, MAX_ARRAY_ITEMS);
 }
 
-export function mapImageResponse(raw: unknown, maxResults: number): ImageSearchResponse {
+interface CategoryEnvelope<R> {
+  query: string;
+  results: R[];
+  suggestions: string[];
+  unresponsiveEngines: [string, string][];
+}
+
+/** Shared envelope projection: filter garbage first, then apply the limit,
+ * so dropped items never consume the maxResults budget. */
+function mapCategoryResponse<R>(
+  raw: unknown,
+  maxResults: number,
+  project: (value: unknown) => R | null,
+): CategoryEnvelope<R> {
   const data = isRecord(raw) ? raw : {};
   return {
     query: typeof data.query === 'string' ? data.query : '',
     results: (Array.isArray(data.results) ? data.results : [])
-      .map(projectImageResult)
-      .filter((item): item is ImageSearchResult => item !== null)
+      .map(project)
+      .filter((item): item is R => item !== null)
       .slice(0, Math.max(0, maxResults)),
     suggestions: asStringArray(data.suggestions).slice(0, MAX_ARRAY_ITEMS),
     unresponsiveEngines: projectUnresponsiveList(data),
   };
 }
 
-function projectNewsResult(value: unknown): NewsSearchResult {
-  const raw: {
-    title?: unknown;
-    url?: unknown;
-    content?: unknown;
-    publishedDate?: unknown;
-    engines?: unknown;
-  } = isRecord(value) ? value : {};
+export function mapImageResponse(raw: unknown, maxResults: number): ImageSearchResponse {
+  return mapCategoryResponse(raw, maxResults, projectImageResult);
+}
+
+function projectNewsResult(value: unknown): NewsSearchResult | null {
+  if (!isRecord(value)) return null;
+  const raw: RawResult = value;
   const result: NewsSearchResult = {
     title: truncateText(typeof raw.title === 'string' ? raw.title : '', MAX_TITLE_CHARS),
     url: truncateText(typeof raw.url === 'string' ? raw.url : '', MAX_URL_CHARS),
@@ -363,44 +404,37 @@ function projectNewsResult(value: unknown): NewsSearchResult {
 }
 
 export function mapNewsResponse(raw: unknown, maxResults: number): NewsSearchResponse {
-  const data = isRecord(raw) ? raw : {};
-  return {
-    query: typeof data.query === 'string' ? data.query : '',
-    results: (Array.isArray(data.results) ? data.results : [])
-      .slice(0, Math.max(0, maxResults))
-      .map(projectNewsResult),
-    suggestions: asStringArray(data.suggestions).slice(0, MAX_ARRAY_ITEMS),
-    unresponsiveEngines: projectUnresponsiveList(data),
-  };
+  return mapCategoryResponse(raw, maxResults, projectNewsResult);
 }
 
 export async function imageSearch(
   config: Config,
-  input: ImageSearchInput,
-  opts: { fetchImpl?: FetchLike } = {},
+  params: SearchParams,
+  opts: { fetchImpl?: FetchLike | undefined } = {},
 ): Promise<ImageSearchResponse> {
-  const raw = await fetchSearchJson(config, toImageSearchParams(input), opts);
-  return mapImageResponse(raw, input.max_results ?? DEFAULT_MAX_RESULTS);
+  const raw = await fetchSearchJson(config, params, opts);
+  return mapImageResponse(raw, params.maxResults ?? DEFAULT_MAX_RESULTS);
 }
 
 export async function newsSearch(
   config: Config,
-  input: NewsSearchInput,
-  opts: { fetchImpl?: FetchLike } = {},
+  params: SearchParams,
+  opts: { fetchImpl?: FetchLike | undefined } = {},
 ): Promise<NewsSearchResponse> {
-  const raw = await fetchSearchJson(config, toNewsSearchParams(input), opts);
-  return mapNewsResponse(raw, input.max_results ?? DEFAULT_MAX_RESULTS);
+  const raw = await fetchSearchJson(config, params, opts);
+  return mapNewsResponse(raw, params.maxResults ?? DEFAULT_MAX_RESULTS);
 }
 
-function projectVideoResult(value: unknown): VideoSearchResult {
-  const raw = isRecord(value) ? value : {};
+function projectVideoResult(value: unknown): VideoSearchResult | null {
+  if (!isRecord(value)) return null;
+  const raw = value;
   const result: VideoSearchResult = {
     title: truncateText(typeof raw.title === 'string' ? raw.title : '', MAX_TITLE_CHARS),
     url: truncateText(typeof raw.url === 'string' ? raw.url : '', MAX_URL_CHARS),
   };
   if (typeof raw.thumbnail === 'string' && raw.thumbnail.trim() !== '')
     result.thumbnailSrc = truncateText(raw.thumbnail, MAX_URL_CHARS);
-  const length = pickLength(raw.length);
+  const length = normalizeDuration(raw.length);
   if (length !== undefined) result.length = length;
   if (typeof raw.author === 'string') result.author = truncateText(raw.author, MAX_AUTHOR_CHARS);
   const publishedDate = pickPublishedDate(raw.publishedDate);
@@ -411,63 +445,42 @@ function projectVideoResult(value: unknown): VideoSearchResult {
 }
 
 export function mapVideoResponse(raw: unknown, maxResults: number): VideoSearchResponse {
-  const data = isRecord(raw) ? raw : {};
-  return {
-    query: typeof data.query === 'string' ? data.query : '',
-    results: (Array.isArray(data.results) ? data.results : [])
-      .slice(0, Math.max(0, maxResults))
-      .map(projectVideoResult),
-    suggestions: asStringArray(data.suggestions).slice(0, MAX_ARRAY_ITEMS),
-    unresponsiveEngines: projectUnresponsiveList(data),
-  };
+  return mapCategoryResponse(raw, maxResults, projectVideoResult);
 }
 
-function projectMusicResult(value: unknown): MusicSearchResult {
-  const raw = isRecord(value) ? value : {};
-  const result: MusicSearchResult = {
-    title: truncateText(typeof raw.title === 'string' ? raw.title : '', MAX_TITLE_CHARS),
-    url: truncateText(typeof raw.url === 'string' ? raw.url : '', MAX_URL_CHARS),
-  };
-  if (typeof raw.audio_src === 'string' && raw.audio_src.trim() !== '')
-    result.audioSrc = truncateText(raw.audio_src, MAX_URL_CHARS);
-  if (typeof raw.thumbnail === 'string' && raw.thumbnail.trim() !== '')
-    result.thumbnailSrc = truncateText(raw.thumbnail, MAX_URL_CHARS);
-  const length = pickLength(raw.length);
-  if (length !== undefined) result.length = length;
-  if (typeof raw.author === 'string') result.author = truncateText(raw.author, MAX_AUTHOR_CHARS);
-  const publishedDate = pickPublishedDate(raw.publishedDate);
-  if (publishedDate !== undefined) result.publishedDate = publishedDate;
-  if (Array.isArray(raw.engines))
-    result.engines = asStringArray(raw.engines).slice(0, MAX_ARRAY_ITEMS);
+function projectMusicResult(value: unknown): MusicSearchResult | null {
+  if (!isRecord(value)) return null;
+  const video = projectVideoResult(value);
+  if (video === null) return null;
+  const result: MusicSearchResult = { title: video.title, url: video.url };
+  if (video.thumbnailSrc !== undefined) result.thumbnailSrc = video.thumbnailSrc;
+  if (video.length !== undefined) result.length = video.length;
+  if (video.author !== undefined) result.author = video.author;
+  if (video.publishedDate !== undefined) result.publishedDate = video.publishedDate;
+  if (video.engines !== undefined) result.engines = video.engines;
+  if (typeof value.audio_src === 'string' && value.audio_src.trim() !== '')
+    result.audioSrc = truncateText(value.audio_src, MAX_URL_CHARS);
   return result;
 }
 
 export function mapMusicResponse(raw: unknown, maxResults: number): MusicSearchResponse {
-  const data = isRecord(raw) ? raw : {};
-  return {
-    query: typeof data.query === 'string' ? data.query : '',
-    results: (Array.isArray(data.results) ? data.results : [])
-      .slice(0, Math.max(0, maxResults))
-      .map(projectMusicResult),
-    suggestions: asStringArray(data.suggestions).slice(0, MAX_ARRAY_ITEMS),
-    unresponsiveEngines: projectUnresponsiveList(data),
-  };
+  return mapCategoryResponse(raw, maxResults, projectMusicResult);
 }
 
 export async function videoSearch(
   config: Config,
-  input: VideoSearchInput,
-  opts: { fetchImpl?: FetchLike } = {},
+  params: SearchParams,
+  opts: { fetchImpl?: FetchLike | undefined } = {},
 ): Promise<VideoSearchResponse> {
-  const raw = await fetchSearchJson(config, toVideoSearchParams(input), opts);
-  return mapVideoResponse(raw, input.max_results ?? DEFAULT_MAX_RESULTS);
+  const raw = await fetchSearchJson(config, params, opts);
+  return mapVideoResponse(raw, params.maxResults ?? DEFAULT_MAX_RESULTS);
 }
 
 export async function musicSearch(
   config: Config,
-  input: MusicSearchInput,
-  opts: { fetchImpl?: FetchLike } = {},
+  params: SearchParams,
+  opts: { fetchImpl?: FetchLike | undefined } = {},
 ): Promise<MusicSearchResponse> {
-  const raw = await fetchSearchJson(config, toMusicSearchParams(input), opts);
-  return mapMusicResponse(raw, input.max_results ?? DEFAULT_MAX_RESULTS);
+  const raw = await fetchSearchJson(config, params, opts);
+  return mapMusicResponse(raw, params.maxResults ?? DEFAULT_MAX_RESULTS);
 }

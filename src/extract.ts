@@ -40,11 +40,14 @@ const BLOCK_TAGS = new Set([
 
 const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE']);
 
+const TEXT_NODE = 3;
+const ELEMENT_NODE = 1;
+
 function collectText(node: WalkNode, out: string[]): void {
   for (const child of Array.from(node.childNodes)) {
-    if (child.nodeType === 3) {
+    if (child.nodeType === TEXT_NODE) {
       out.push(child.textContent ?? '');
-    } else if (child.nodeType === 1) {
+    } else if (child.nodeType === ELEMENT_NODE) {
       const tag = (child.tagName ?? '').toUpperCase();
       if (SKIP_TAGS.has(tag)) continue;
       const isBlock = BLOCK_TAGS.has(tag);
@@ -55,9 +58,8 @@ function collectText(node: WalkNode, out: string[]): void {
   }
 }
 
-/** Absolutize one URL-valued attribute against the page's final URL. Harmless
- * schemes (mailto:, tel:) pass through unchanged; dangerous or unparseable
- * values (javascript:, data:, …) are removed entirely. */
+/** Absolutize one URL-valued attribute against the page's final URL;
+ * mailto:/tel: pass through, dangerous schemes (javascript:, data:) are removed. */
 function absolutizeAttribute(element: DomElement, attribute: string, baseUrl: string): void {
   const value = element.getAttribute(attribute);
   if (value === null || /^\s*(mailto:|tel:)/i.test(value)) return;
@@ -73,8 +75,7 @@ function absolutizeAttribute(element: DomElement, attribute: string, baseUrl: st
   }
 }
 
-/** Strip non-content elements and make links/images absolute so the returned
- * Markdown is usable without knowing the page's base URL. */
+/** Strip junk and absolutize link/image URLs so the Markdown works without the base URL. */
 export function cleanContentHtml(html: string, baseUrl: string): string {
   // Readability emits fragments without <body>, and linkedom drops fragment
   // content unless it is wrapped in a document first.
@@ -99,7 +100,7 @@ export function cleanContentHtml(html: string, baseUrl: string): string {
   return document.body ? document.body.innerHTML : html;
 }
 
-export interface ExtractedArticle {
+interface ExtractedArticle {
   title?: string;
   byline?: string;
   contentHtml?: string;
@@ -109,6 +110,7 @@ export interface ExtractedArticle {
 export function extractArticle(html: string, url: string): ExtractedArticle {
   if (html.trim() === '') return {};
   const { document } = parseHTML(html);
+  // charThreshold: 0 keeps articles the 500-char default would reject.
   const reader = new Readability(document, { charThreshold: 0 });
   const article = reader.parse();
   if (!article) return {};

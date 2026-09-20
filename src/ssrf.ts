@@ -39,6 +39,7 @@ const V6_RANGES: ReadonlyArray<readonly [string, number]> = [
   ['64:ff9b:1::', 48],
   ['100::', 64],
   ['2001::', 32],
+  ['2001:2::', 48],
   ['2001:10::', 28],
   ['2001:20::', 28],
   ['2001:db8::', 32],
@@ -61,11 +62,8 @@ function normalizeIp(ip: string): { address: string; family: number } | null {
   return family === 0 ? null : { address, family };
 }
 
-// Classifies IP literals only; returns false for non-IP input. Callers must pass
-// validated IP strings (literal checks or resolved AddressRecord values), never raw
-// hostnames. The only producers are `isIP()` checks and `dnsLookup`, so garbage
-// input is impossible in production; if it ever occurred, the guarded lookup
-// below still refuses to connect to an unclassifiable host.
+// IP literals only — returns false for non-IP input; callers pass validated
+// addresses (from isIP()/dnsLookup), never raw hostnames.
 export function isIpBlocked(ip: string): boolean {
   const normalized = normalizeIp(ip);
   if (normalized === null) return false;
@@ -135,8 +133,8 @@ export async function assertUrlAllowed(
   return url;
 }
 
-export type GuardedLookupOptions = { all?: boolean };
-export type LookupCallback = (
+type GuardedLookupOptions = { all?: boolean };
+type LookupCallback = (
   error: Error | null,
   address?: string | AddressRecord[],
   family?: number,
@@ -187,12 +185,8 @@ export function createGuardedDispatcher(opts: {
   allowPrivateHosts: boolean;
   lookup?: LookupAll;
 }): Agent {
-  // NOTE: undici replaces `lookup` with an identity lookup when the hostname
-  // is an IP literal, so the dispatcher alone does not guard literals. Every
-  // request through it must also pass `assertUrlAllowed()` first — see
-  // fetchContent(), which does both per redirect hop.
-  // undici's connect.lookup expects Node's LookupFunction; our guarded lookup
-  // is signature-compatible (verified behaviorally in ssrf-dispatcher tests).
+  // undici bypasses `lookup` for IP literals, so requests must also pass assertUrlAllowed().
+  // `as never`: connect.lookup expects Node's LookupFunction; ours is signature-compatible.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   return new Agent({ connect: { lookup: createGuardedLookup(opts) as never } });
 }

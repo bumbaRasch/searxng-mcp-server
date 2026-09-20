@@ -59,6 +59,10 @@ describe('isIpBlocked', () => {
   ])('classifies %s as blocked=%s', (ip, blocked) => {
     expect(isIpBlocked(ip)).toBe(blocked);
   });
+
+  it('blocks RFC 5180 benchmarking space 2001:2::/48', () => {
+    expect(isIpBlocked('2001:2::1')).toBe(true);
+  });
 });
 
 describe('isUrlSchemeAllowed', () => {
@@ -146,4 +150,11 @@ describe('assertUrlAllowed', () => {
       assertUrlAllowed('https://empty.test', { allowPrivateHosts: false, lookup: emptyLookup }),
     ).rejects.toThrow(/Could not resolve/);
   });
+
+  it.each(['http://2130706433/', 'http://0x7f000001/', 'http://0177.0.0.1/', 'http://127.1/'])(
+    'rejects a non-dotted loopback encoding: %s',
+    async (url) => {
+      await expect(assertUrlAllowed(url, { allowPrivateHosts: false })).rejects.toThrow();
+    },
+  );
 });

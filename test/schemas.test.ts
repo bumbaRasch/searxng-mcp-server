@@ -6,13 +6,37 @@ import {
   musicSearchOutput,
   newsSearchInput,
   newsSearchOutput,
+  searchInput,
   toImageSearchParams,
   toMusicSearchParams,
   toNewsSearchParams,
+  toSearchParams,
   toVideoSearchParams,
   videoSearchInput,
   videoSearchOutput,
 } from '../src/schemas.js';
+
+describe('searchInput / toSearchParams', () => {
+  it('maps categories and time_range through to search params', () => {
+    const params = toSearchParams(
+      searchInput.parse({ query: 'q', categories: ['news'], time_range: 'day' }),
+    );
+    expect(params.categories).toEqual(['news']);
+    expect(params.timeRange).toBe('day');
+  });
+
+  it('rejects max_results: 0', () => {
+    expect(searchInput.safeParse({ query: 'q', max_results: 0 }).success).toBe(false);
+  });
+
+  it('rejects a 501-character query', () => {
+    expect(searchInput.safeParse({ query: 'q'.repeat(501) }).success).toBe(false);
+  });
+
+  it('rejects a 1-character language code', () => {
+    expect(searchInput.safeParse({ query: 'q', language: 'x' }).success).toBe(false);
+  });
+});
 
 describe('imageSearchInput', () => {
   it('accepts shared search args and applies the max_results default', () => {

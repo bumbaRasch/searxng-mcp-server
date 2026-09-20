@@ -16,23 +16,35 @@ const UNTRUSTED_CLOSE = 'UNTRUSTED_WEB_CONTENT>>>';
 const CLOSE_MARKER_PATTERN = new RegExp('UNTRUSTED_WEB_CONTENT[\\s\\p{C}]*>>>', 'giu');
 const OPEN_MARKER_PATTERN = new RegExp('<<<[\\s\\p{C}]*UNTRUSTED_WEB_CONTENT', 'giu');
 
-/**
- * Neutralize delimiter spoofing in web-derived content: defuse any embedded
- * closing marker and any forged opening marker, so untrusted text can neither
- * open nor close the untrusted wrapper it lives in.
- */
+/** Defuse embedded open/close markers so untrusted text cannot break out of the wrapper. */
 export function sanitizeUntrusted(text: string): string {
   return text
     .replace(CLOSE_MARKER_PATTERN, 'UNTRUSTED_WEB_CONTENT_>')
     .replace(OPEN_MARKER_PATTERN, '<_<_UNTRUSTED_WEB_CONTENT');
 }
 
-/**
- * Sanitize every web-derived string rendered OUTSIDE the wrapper (titles,
- * bylines, engine names, urls, answers, error text): collapse control and
- * format characters — which could otherwise forge new trusted-looking lines —
- * and apply the same marker neutralization as the wrapper content.
- */
+/** The wrapper only fences the text channel, so structured output needs the same defusing. */
+export function sanitizeStructured<T>(value: T): T {
+  if (typeof value === 'string') {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+    return sanitizeUntrusted(value) as T;
+  }
+  if (Array.isArray(value)) {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+    return value.map(sanitizeStructured) as T;
+  }
+  if (typeof value === 'object' && value !== null) {
+    const sanitized = Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, sanitizeStructured(item)]),
+    );
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+    return sanitized as T;
+  }
+  return value;
+}
+
+/** For text rendered outside the wrapper: control/format characters could
+ * forge trusted-looking lines, so collapse them and defuse markers. */
 export function sanitizeMeta(text: string): string {
   return sanitizeUntrusted(text.replace(/[\p{C}\p{Zl}\p{Zp}]/gu, ' '));
 }
@@ -48,9 +60,8 @@ export function wrapUntrusted(content: string): string {
   ].join('\n');
 }
 
-/** Tool error text: reflects potentially attacker-controlled strings (URLs,
- * hosts) so it gets the same sanitization as any other trusted-frame text. */
-export function formatToolError(message: string): string {
+/** Error text may embed attacker-controlled strings (URLs, hosts), so sanitize it too. */
+export function sanitizeToolError(message: string): string {
   return sanitizeMeta(message);
 }
 
@@ -117,100 +128,86 @@ export function formatFetchedPage(response: FetchResult): string {
   return lines.join('\n').trim();
 }
 
-export function formatImageResults(response: ImageSearchResponse): string {
-  const lines: string[] = [`# Image results for "${sanitizeMeta(response.query)}"`];
+/** Shared category skeleton; per-result lines land inside the untrusted wrapper. */
+function renderCategoryResults<R extends { title: string }>(
+  heading: string,
+  response: { query: string; results: R[]; suggestions: string[] },
+  renderResult: (result: R) => string[],
+): string {
+  const lines: string[] = [`# ${heading} results for "${sanitizeMeta(response.query)}"`];
   const body: string[] = [];
   if (response.results.length === 0) body.push('No results.');
 
   response.results.forEach((result, index) => {
-    body.push('', `## ${index + 1}. ${sanitizeMeta(result.title) || '(untitled)'}`);
-    if (result.thumbnailSrc) body.push(`![](<${sanitizeMeta(result.thumbnailSrc)}>)`);
-    if (result.url) body.push(`Page: ${sanitizeMeta(result.url)}`);
-    body.push(`Image: ${sanitizeMeta(result.imgSrc)}`);
+    body.push(
+      '',
+      `## ${index + 1}. ${sanitizeMeta(result.title) || '(untitled)'}`,
+      ...renderResult(result),
+    );
+  });
+
+  if (response.suggestions.length > 0) {
+    body.push('', `Did you mean: ${response.suggestions.map(sanitizeMeta).join(', ')}`);
+  }
+
+  lines.push(wrapUntrusted(body.join('\n')));
+  return lines.join('\n').trim();
+}
+
+export function formatImageResults(response: ImageSearchResponse): string {
+  return renderCategoryResults('Image', response, (result) => {
+    const lines: string[] = [];
+    if (result.thumbnailSrc) lines.push(`![](<${sanitizeMeta(result.thumbnailSrc)}>)`);
+    if (result.url) lines.push(`Page: ${sanitizeMeta(result.url)}`);
+    lines.push(`Image: ${sanitizeMeta(result.imgSrc)}`);
     const meta: string[] = [];
     if (result.resolution) meta.push(sanitizeMeta(result.resolution));
     if (result.imgFormat) meta.push(sanitizeMeta(result.imgFormat));
     if (result.source) meta.push(`source: ${sanitizeMeta(result.source)}`);
-    if (meta.length > 0) body.push(`_${meta.join(' · ')}_`);
+    if (meta.length > 0) lines.push(`_${meta.join(' · ')}_`);
+    return lines;
   });
-
-  if (response.suggestions.length > 0) {
-    body.push('', `Did you mean: ${response.suggestions.map(sanitizeMeta).join(', ')}`);
-  }
-
-  lines.push(wrapUntrusted(body.join('\n')));
-  return lines.join('\n').trim();
 }
 
 export function formatNewsResults(response: NewsSearchResponse): string {
-  const lines: string[] = [`# News results for "${sanitizeMeta(response.query)}"`];
-  const body: string[] = [];
-  if (response.results.length === 0) body.push('No results.');
-
-  response.results.forEach((result, index) => {
-    body.push('', `## ${index + 1}. ${sanitizeMeta(result.title) || '(untitled)'}`);
-    body.push(sanitizeMeta(result.url));
-    if (result.content) body.push('', result.content);
+  return renderCategoryResults('News', response, (result) => {
+    const lines: string[] = [];
+    lines.push(sanitizeMeta(result.url));
+    if (result.content) lines.push('', result.content);
     const meta: string[] = [];
     if (result.publishedDate) meta.push(`published: ${sanitizeMeta(result.publishedDate)}`);
     if (result.engines && result.engines.length > 0)
       meta.push(`engines: ${sanitizeMeta(result.engines.join(', '))}`);
-    if (meta.length > 0) body.push('', `_${meta.join(' · ')}_`);
+    if (meta.length > 0) lines.push('', `_${meta.join(' · ')}_`);
+    return lines;
   });
-
-  if (response.suggestions.length > 0) {
-    body.push('', `Did you mean: ${response.suggestions.map(sanitizeMeta).join(', ')}`);
-  }
-
-  lines.push(wrapUntrusted(body.join('\n')));
-  return lines.join('\n').trim();
 }
 
 export function formatVideoResults(response: VideoSearchResponse): string {
-  const lines: string[] = [`# Video results for "${sanitizeMeta(response.query)}"`];
-  const body: string[] = [];
-  if (response.results.length === 0) body.push('No results.');
-
-  response.results.forEach((result, index) => {
-    body.push('', `## ${index + 1}. ${sanitizeMeta(result.title) || '(untitled)'}`);
-    if (result.thumbnailSrc) body.push(`![](<${sanitizeMeta(result.thumbnailSrc)}>)`);
-    if (result.url) body.push(sanitizeMeta(result.url));
+  return renderCategoryResults('Video', response, (result) => {
+    const lines: string[] = [];
+    if (result.thumbnailSrc) lines.push(`![](<${sanitizeMeta(result.thumbnailSrc)}>)`);
+    if (result.url) lines.push(sanitizeMeta(result.url));
     const meta: string[] = [];
     if (result.length) meta.push(sanitizeMeta(result.length));
     if (result.author) meta.push(sanitizeMeta(result.author));
     if (result.publishedDate) meta.push(`published: ${sanitizeMeta(result.publishedDate)}`);
-    if (meta.length > 0) body.push(`_${meta.join(' · ')}_`);
+    if (meta.length > 0) lines.push(`_${meta.join(' · ')}_`);
+    return lines;
   });
-
-  if (response.suggestions.length > 0) {
-    body.push('', `Did you mean: ${response.suggestions.map(sanitizeMeta).join(', ')}`);
-  }
-
-  lines.push(wrapUntrusted(body.join('\n')));
-  return lines.join('\n').trim();
 }
 
 export function formatMusicResults(response: MusicSearchResponse): string {
-  const lines: string[] = [`# Music results for "${sanitizeMeta(response.query)}"`];
-  const body: string[] = [];
-  if (response.results.length === 0) body.push('No results.');
-
-  response.results.forEach((result, index) => {
-    body.push('', `## ${index + 1}. ${sanitizeMeta(result.title) || '(untitled)'}`);
-    if (result.thumbnailSrc) body.push(`![](<${sanitizeMeta(result.thumbnailSrc)}>)`);
-    if (result.url) body.push(`Page: ${sanitizeMeta(result.url)}`);
-    if (result.audioSrc) body.push(`Audio: ${sanitizeMeta(result.audioSrc)}`);
+  return renderCategoryResults('Music', response, (result) => {
+    const lines: string[] = [];
+    if (result.thumbnailSrc) lines.push(`![](<${sanitizeMeta(result.thumbnailSrc)}>)`);
+    if (result.url) lines.push(`Page: ${sanitizeMeta(result.url)}`);
+    if (result.audioSrc) lines.push(`Audio: ${sanitizeMeta(result.audioSrc)}`);
     const meta: string[] = [];
     if (result.length) meta.push(sanitizeMeta(result.length));
     if (result.author) meta.push(sanitizeMeta(result.author));
     if (result.publishedDate) meta.push(`published: ${sanitizeMeta(result.publishedDate)}`);
-    if (meta.length > 0) body.push(`_${meta.join(' · ')}_`);
+    if (meta.length > 0) lines.push(`_${meta.join(' · ')}_`);
+    return lines;
   });
-
-  if (response.suggestions.length > 0) {
-    body.push('', `Did you mean: ${response.suggestions.map(sanitizeMeta).join(', ')}`);
-  }
-
-  lines.push(wrapUntrusted(body.join('\n')));
-  return lines.join('\n').trim();
 }

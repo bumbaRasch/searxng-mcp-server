@@ -1,8 +1,6 @@
 import * as z from 'zod/v4';
 
-// Single source of truth for tool input/output shapes: the zod schemas below
-// both validate wire data and (via z.infer) type the internal data model.
-// Hand-written duplicates of these shapes are intentionally absent.
+// Single source of truth for tool input/output shapes: zod validates the wire data; z.infer types the model.
 
 const timeRange = z.enum(['day', 'week', 'month', 'year']);
 
@@ -10,8 +8,7 @@ export const DEFAULT_MAX_RESULTS = 10;
 /** Projection bound for infobox urls; also caps how many are rendered. */
 export const MAX_URLS_PER_INFOBOX = 10;
 
-// Shared argument fields, reused by every search-like input schema so the
-// inputs can never drift apart.
+// Shared argument atoms: every search-like input reuses these, so they cannot drift.
 const queryArg = z.string().min(1).max(500).describe('The search query.');
 const enginesArg = z
   .array(z.string().min(1))
@@ -31,6 +28,21 @@ const maxResultsArg = z
   .default(DEFAULT_MAX_RESULTS)
   .describe(`Maximum results to return (default ${DEFAULT_MAX_RESULTS}).`);
 
+const timeRangeArg = timeRange.optional().describe('Restrict results by time.');
+const commonCategoryArgs = {
+  query: queryArg,
+  engines: enginesArg,
+  language: languageArg,
+  pageno: pagenoArg,
+  safesearch: safesearchArg,
+  max_results: maxResultsArg,
+};
+
+const responseTail = {
+  suggestions: z.array(z.string()),
+  unresponsiveEngines: z.array(z.tuple([z.string(), z.string()])),
+};
+
 export const searchInput = z.object({
   query: queryArg,
   categories: z
@@ -39,7 +51,7 @@ export const searchInput = z.object({
     .describe('SearXNG categories, e.g. ["general"], ["news"]. Unknown values are ignored.'),
   engines: enginesArg,
   language: languageArg,
-  time_range: timeRange.optional().describe('Restrict results by time.'),
+  time_range: timeRangeArg,
   pageno: pagenoArg,
   safesearch: safesearchArg,
   max_results: maxResultsArg,
@@ -73,33 +85,17 @@ export const searchOutput = z.object({
       urls: z.array(z.string()).optional(),
     }),
   ),
-  suggestions: z.array(z.string()),
-  unresponsiveEngines: z.array(z.tuple([z.string(), z.string()])),
+  ...responseTail,
 });
 export type SearchResponse = z.infer<typeof searchOutput>;
 export type SearchResult = z.infer<(typeof searchOutput.shape)['results']['element']>;
 export type SearchAnswer = z.infer<(typeof searchOutput.shape)['answers']['element']>;
 export type SearchInfobox = z.infer<(typeof searchOutput.shape)['infoboxes']['element']>;
 
-export const imageSearchInput = z.object({
-  query: queryArg,
-  engines: enginesArg,
-  language: languageArg,
-  pageno: pagenoArg,
-  safesearch: safesearchArg,
-  max_results: maxResultsArg,
-});
+export const imageSearchInput = z.object({ ...commonCategoryArgs });
 export type ImageSearchInput = z.infer<typeof imageSearchInput>;
 
-export const newsSearchInput = z.object({
-  query: queryArg,
-  engines: enginesArg,
-  language: languageArg,
-  time_range: timeRange.optional().describe('Restrict results by time.'),
-  pageno: pagenoArg,
-  safesearch: safesearchArg,
-  max_results: maxResultsArg,
-});
+export const newsSearchInput = z.object({ ...commonCategoryArgs, time_range: timeRangeArg });
 export type NewsSearchInput = z.infer<typeof newsSearchInput>;
 
 export const imageSearchOutput = z.object({
@@ -116,8 +112,7 @@ export const imageSearchOutput = z.object({
       engines: z.array(z.string()).optional(),
     }),
   ),
-  suggestions: z.array(z.string()),
-  unresponsiveEngines: z.array(z.tuple([z.string(), z.string()])),
+  ...responseTail,
 });
 export type ImageSearchResponse = z.infer<typeof imageSearchOutput>;
 export type ImageSearchResult = z.infer<(typeof imageSearchOutput.shape)['results']['element']>;
@@ -133,31 +128,15 @@ export const newsSearchOutput = z.object({
       engines: z.array(z.string()).optional(),
     }),
   ),
-  suggestions: z.array(z.string()),
-  unresponsiveEngines: z.array(z.tuple([z.string(), z.string()])),
+  ...responseTail,
 });
 export type NewsSearchResponse = z.infer<typeof newsSearchOutput>;
 export type NewsSearchResult = z.infer<(typeof newsSearchOutput.shape)['results']['element']>;
 
-export const videoSearchInput = z.object({
-  query: queryArg,
-  engines: enginesArg,
-  language: languageArg,
-  time_range: timeRange.optional().describe('Restrict results by time.'),
-  pageno: pagenoArg,
-  safesearch: safesearchArg,
-  max_results: maxResultsArg,
-});
+export const videoSearchInput = z.object({ ...commonCategoryArgs, time_range: timeRangeArg });
 export type VideoSearchInput = z.infer<typeof videoSearchInput>;
 
-export const musicSearchInput = z.object({
-  query: queryArg,
-  engines: enginesArg,
-  language: languageArg,
-  pageno: pagenoArg,
-  safesearch: safesearchArg,
-  max_results: maxResultsArg,
-});
+export const musicSearchInput = z.object({ ...commonCategoryArgs });
 export type MusicSearchInput = z.infer<typeof musicSearchInput>;
 
 export const videoSearchOutput = z.object({
@@ -173,8 +152,7 @@ export const videoSearchOutput = z.object({
       engines: z.array(z.string()).optional(),
     }),
   ),
-  suggestions: z.array(z.string()),
-  unresponsiveEngines: z.array(z.tuple([z.string(), z.string()])),
+  ...responseTail,
 });
 export type VideoSearchResponse = z.infer<typeof videoSearchOutput>;
 export type VideoSearchResult = z.infer<(typeof videoSearchOutput.shape)['results']['element']>;
@@ -193,8 +171,7 @@ export const musicSearchOutput = z.object({
       engines: z.array(z.string()).optional(),
     }),
   ),
-  suggestions: z.array(z.string()),
-  unresponsiveEngines: z.array(z.tuple([z.string(), z.string()])),
+  ...responseTail,
 });
 export type MusicSearchResponse = z.infer<typeof musicSearchOutput>;
 export type MusicSearchResult = z.infer<(typeof musicSearchOutput.shape)['results']['element']>;
@@ -229,26 +206,26 @@ export const fetchOutput = z.object({
 export type FetchResult = z.infer<typeof fetchOutput>;
 
 /** Internal search parameters: tool args (snake_case) mapped to camelCase. */
-export type TimeRange = z.infer<typeof timeRange>;
-export type Safesearch = NonNullable<z.infer<(typeof searchInput.shape)['safesearch']>>;
+type TimeRange = z.infer<typeof timeRange>;
+type Safesearch = NonNullable<z.infer<(typeof searchInput.shape)['safesearch']>>;
 
 export interface SearchParams {
   query: string;
-  categories?: string[];
-  engines?: string[];
-  language?: string;
-  timeRange?: TimeRange;
-  pageno?: number;
-  safesearch?: Safesearch;
-  maxResults?: number;
+  categories?: string[] | undefined;
+  engines?: string[] | undefined;
+  language?: string | undefined;
+  timeRange?: TimeRange | undefined;
+  pageno?: number | undefined;
+  safesearch?: Safesearch | undefined;
+  maxResults?: number | undefined;
 }
 
 interface CommonSearchArgs {
   query: string;
-  engines?: string[];
-  language?: string;
-  pageno?: number;
-  safesearch?: Safesearch;
+  engines?: string[] | undefined;
+  language?: string | undefined;
+  pageno?: number | undefined;
+  safesearch?: Safesearch | undefined;
   max_results: number;
 }
 
@@ -259,7 +236,7 @@ function mapCommonParams(input: CommonSearchArgs): SearchParams {
     language: input.language,
     pageno: input.pageno,
     safesearch: input.safesearch,
-    maxResults: input.max_results ?? DEFAULT_MAX_RESULTS,
+    maxResults: input.max_results,
   };
 }
 

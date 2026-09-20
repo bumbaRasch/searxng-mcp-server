@@ -1,10 +1,11 @@
 import { InMemoryTransport, type JSONRPCMessage } from '@modelcontextprotocol/server';
 import { describe, expect, it } from 'vitest';
 import { createServer } from '../src/server.js';
+import { TOOL_NAMES } from '../src/tools.js';
 import { makeConfig } from './helpers.js';
 
 interface RpcResult {
-  tools?: { name: string; outputSchema?: unknown }[];
+  tools?: { name: string; outputSchema?: unknown; icons?: unknown[] }[];
   isError?: boolean;
   content?: { text?: string }[];
 }
@@ -28,12 +29,14 @@ const INITIALIZED: JSONRPCMessage = {
  * result, or rejects on a JSON-RPC error response / timeout. */
 async function rpc(
   requests: { id: number; method: string; params?: unknown }[],
+  captureInit = false,
 ): Promise<Map<number, RpcResult>> {
   const server = createServer(makeConfig());
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
 
   const expected = new Set(requests.map((request) => request.id));
+  if (captureInit) expected.add(1);
   const responses = new Map<number, RpcResult>();
   const inbox: JSONRPCMessage[] = [];
 
@@ -59,7 +62,11 @@ async function rpc(
           );
           return;
         }
-        if (!('result' in message) || !expected.has(message.id as number)) continue;
+        if (
+          !('result' in message) ||
+          (!expected.has(message.id as number) && !(captureInit && message.id === 1))
+        )
+          continue;
         responses.set(message.id as number, message.result as RpcResult);
         if (expected.size === responses.size) done();
       }
@@ -92,20 +99,22 @@ async function rpc(
 }
 
 describe('createServer wiring', () => {
-  it('exposes all six tools with output schemas over MCP', async () => {
+  it('exposes every tool in TOOL_NAMES with output schemas over MCP', async () => {
     const responses = await rpc([{ id: 2, method: 'tools/list' }]);
     const listing = responses.get(2);
-    expect(listing?.tools?.map((tool) => tool.name)).toEqual([
-      'search',
-      'fetch_content',
-      'image_search',
-      'news_search',
-      'video_search',
-      'music_search',
-    ]);
+    expect(listing?.tools?.map((tool) => tool.name)).toEqual([...TOOL_NAMES]);
     for (const tool of listing?.tools ?? []) {
       expect(tool.outputSchema).toBeDefined();
+      expect(Array.isArray(tool.icons)).toBe(true);
     }
+  });
+
+  it('advertises server icons in initialize (serverInfo.icons)', async () => {
+    const responses = await rpc([], true);
+    const serverInfo = responses.get(1) as { serverInfo?: { icons?: { src: string }[] } };
+    const icons = serverInfo?.serverInfo?.icons ?? [];
+    expect(icons.length).toBeGreaterThan(0);
+    expect(icons[0]?.src).toMatch(/^data:image\/png;base64,/);
   });
 
   it('returns sanitized tool errors for invalid input', async () => {

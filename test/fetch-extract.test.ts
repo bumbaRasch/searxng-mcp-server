@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { cleanContentHtml, extractArticle, stripToText } from '../src/extract.js';
-import { toMarkdown, truncate } from '../src/markdown.js';
+import { toMarkdown, truncateWithMarker } from '../src/markdown.js';
 
 const ARTICLE_HTML = `<!doctype html><html><head><title>My Post</title></head><body>
   <article>
@@ -26,6 +26,18 @@ describe('extractArticle', () => {
   it('returns an empty object for an empty string', () => {
     expect(extractArticle('', 'https://x.test')).toEqual({});
   });
+
+  it('extracts a byline when the article has one', () => {
+    const html = `<!doctype html><html><head><title>Post</title></head><body>
+      <article>
+        <header><h1>Post</h1><p class="byline">By Jane Doe</p></header>
+        <p>First paragraph with enough words to satisfy readability thresholds and make the
+        extraction produce a usable article body for the reader. More words here to be safe.</p>
+        <p>Second paragraph also with plenty of words for the scoring to prefer the article.</p>
+      </article>
+    </body></html>`;
+    expect(extractArticle(html, 'https://blog.test/post').byline).toBe('By Jane Doe');
+  });
 });
 
 describe('cleanContentHtml', () => {
@@ -43,6 +55,16 @@ describe('cleanContentHtml', () => {
     const cleaned = cleanContentHtml(html, 'https://base.test/');
     expect(cleaned).toContain('href="https://abs.test/x"');
     expect(cleaned).toContain('mailto:hi@example.test');
+  });
+
+  it('passes tel: links through unchanged', () => {
+    const cleaned = cleanContentHtml('<a href="tel:+1555010999">call</a>', 'https://page.test/');
+    expect(cleaned).toContain('href="tel:+1555010999"');
+  });
+
+  it('absolutizes protocol-relative URLs against the page origin', () => {
+    const cleaned = cleanContentHtml('<a href="//cdn.test/x">cdn</a>', 'https://page.test/article');
+    expect(cleaned).toContain('href="https://cdn.test/x"');
   });
 
   it('removes dangerous href schemes', () => {
@@ -86,6 +108,24 @@ describe('toMarkdown', () => {
     const md = toMarkdown('<pre><code>-   keep</code></pre>');
     expect(md).toContain('-   keep');
   });
+
+  it('tightens bullet markers to "-"', () => {
+    // turndown emits "*" for <li>; the pipeline must normalize it to "-"
+    const md = toMarkdown('<ul><li>one</li><li>two</li></ul>');
+    expect(md).toContain('- one');
+    expect(md).not.toContain('* one');
+  });
+
+  it('keeps prose starting with a list marker escaped, not listified', () => {
+    const md = toMarkdown('<p>+ item</p>');
+    expect(md).toContain('\\+ item');
+    expect(md).not.toMatch(/^- item/m);
+  });
+
+  it('leaves ~~~ fence markers untouched', () => {
+    const md = toMarkdown('<pre><code>a\n~~~\nb</code></pre>');
+    expect(md).toContain('~~~');
+  });
 });
 
 describe('stripToText', () => {
@@ -122,13 +162,13 @@ describe('stripToText', () => {
   });
 });
 
-describe('truncate', () => {
+describe('truncateWithMarker', () => {
   it('returns text unchanged when under the limit', () => {
-    expect(truncate('abc', 10)).toEqual({ content: 'abc', truncated: false });
+    expect(truncateWithMarker('abc', 10)).toEqual({ content: 'abc', truncated: false });
   });
 
   it('cuts and marks when over the limit', () => {
-    const result = truncate(`abcdef${'x'.repeat(50)}`, 30);
+    const result = truncateWithMarker(`abcdef${'x'.repeat(50)}`, 30);
     expect(result.truncated).toBe(true);
     expect(result.content.startsWith('abcdef')).toBe(true);
     expect(result.content).toContain('[Content truncated]');
@@ -136,23 +176,23 @@ describe('truncate', () => {
   });
 
   it('never exceeds maxChars even when maxChars is smaller than the marker', () => {
-    const result = truncate('abcdefghij', 5);
+    const result = truncateWithMarker('abcdefghij', 5);
     expect(result.truncated).toBe(true);
     expect(result.content.length).toBeLessThanOrEqual(5);
   });
 
   it('never exceeds a zero cap', () => {
-    const result = truncate('abcdefghij', 0);
+    const result = truncateWithMarker('abcdefghij', 0);
     expect(result.truncated).toBe(true);
     expect(result.content.length).toBeLessThanOrEqual(0);
   });
 
   it('clamps a negative cap to zero', () => {
-    expect(truncate('abcdefghij', -5)).toEqual({ content: '', truncated: true });
+    expect(truncateWithMarker('abcdefghij', -5)).toEqual({ content: '', truncated: true });
   });
 
   it('never exceeds maxChars for a large string', () => {
-    const result = truncate('x'.repeat(1000), 100);
+    const result = truncateWithMarker('x'.repeat(1000), 100);
     expect(result.truncated).toBe(true);
     expect(result.content.length).toBeLessThanOrEqual(100);
   });

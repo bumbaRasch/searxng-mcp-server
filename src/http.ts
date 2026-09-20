@@ -8,15 +8,25 @@ export interface HttpResponseLike {
 
 export type FetchLike = (
   url: string,
-  init?: RequestInit & { dispatcher?: unknown },
+  init?: Omit<RequestInit, 'dispatcher'> & { dispatcher?: unknown },
 ) => Promise<HttpResponseLike>;
+
+function byteLimitError(limit: number): Error {
+  return new Error(`Response exceeds the ${limit} byte limit.`);
+}
+
+export function isRedirect(status: number): boolean {
+  return status >= 300 && status < 400;
+}
 
 export async function readCapped(response: HttpResponseLike, limit: number): Promise<string> {
   const reader = response.body?.getReader();
   if (!reader) {
+    const declared = Number(response.headers.get('content-length') ?? '');
+    if (Number.isFinite(declared) && declared > limit) throw byteLimitError(limit);
     const text = await response.text();
     if (Buffer.byteLength(text, 'utf8') > limit) {
-      throw new Error(`Response exceeds the ${limit} byte limit.`);
+      throw byteLimitError(limit);
     }
     return text;
   }
@@ -29,7 +39,7 @@ export async function readCapped(response: HttpResponseLike, limit: number): Pro
       total += value.byteLength;
       if (total > limit) {
         await reader.cancel();
-        throw new Error(`Response exceeds the ${limit} byte limit.`);
+        throw byteLimitError(limit);
       }
       chunks.push(value);
     }

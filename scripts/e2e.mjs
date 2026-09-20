@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// End-to-end verification: spawns the built MCP server (dist/index.js) and
-// drives the JSON-RPC handshake + tool calls over stdio against a live
-// SearXNG instance. Usage: node scripts/e2e.mjs
-// Requires: docker compose stack running on http://localhost:8888.
+// Spawns the built MCP server (dist/index.js) and drives the JSON-RPC
+// handshake + tool calls over stdio against a live SearXNG (localhost:8888).
 
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
+
+import { TOOL_NAMES } from '../dist/tools.js';
 
 const SEARXNG_URL = process.env.SEARXNG_URL ?? 'http://localhost:8888';
 const SERVER = fileURLToPath(new URL('../dist/index.js', import.meta.url));
@@ -93,20 +93,17 @@ async function main() {
     const init = await request(serverProcess, 'initialize', {
       protocolVersion: PROTOCOL_VERSION,
       capabilities: {},
-      clientInfo: { name: 'searxng-mcp-ts-e2e', version: '0.0.1' },
+      clientInfo: { name: 'searxng-mcp-server-e2e', version: '0.0.1' },
     });
-    assert(init.result?.serverInfo?.name === 'searxng-mcp-ts', 'initialize returns serverInfo');
+    assert(init.result?.serverInfo?.name === 'searxng-mcp-server', 'initialize returns serverInfo');
     send(serverProcess, { jsonrpc: '2.0', method: 'notifications/initialized' });
 
     // 2. Tool registration
     const tools = await request(serverProcess, 'tools/list', {});
     const names = tools.result?.tools?.map((tool) => tool.name) ?? [];
-    assert(names.includes('search'), 'tools/list registers "search"');
-    assert(names.includes('fetch_content'), 'tools/list registers "fetch_content"');
-    assert(names.includes('image_search'), 'tools/list registers "image_search"');
-    assert(names.includes('news_search'), 'tools/list registers "news_search"');
-    assert(names.includes('video_search'), 'tools/list registers "video_search"');
-    assert(names.includes('music_search'), 'tools/list registers "music_search"');
+    for (const name of TOOL_NAMES) {
+      assert(names.includes(name), `tools/list registers "${name}"`);
+    }
 
     // 3. search against the live SearXNG instance
     const searchCall = await request(serverProcess, 'tools/call', {

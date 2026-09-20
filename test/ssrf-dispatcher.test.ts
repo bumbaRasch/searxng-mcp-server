@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { createGuardedDispatcher, createGuardedLookup } from '../src/ssrf.js';
 
 type Lookup = ReturnType<typeof createGuardedLookup>;
-type CbResult = { err: Error | null; address?: string; family?: number };
+type CbResult = { err: Error | null; address?: string | undefined; family?: number | undefined };
 
 async function withServer<T>(run: (port: number) => Promise<T>): Promise<T> {
   const server = createServer((_req, res) => res.end('ok'));

@@ -56,6 +56,17 @@ describe('readCapped', () => {
     await expect(readCapped(bodyless('x'.repeat(10)), 5)).rejects.toThrow(/byte limit/i);
   });
 
+  it('caps the headerless fallback path via content-length', async () => {
+    const response = {
+      status: 200,
+      ok: true,
+      headers: { get: (name: string) => (name === 'content-length' ? '999999999' : null) },
+      body: null,
+      text: async () => 'x',
+    };
+    await expect(readCapped(response, 10)).rejects.toThrow(/byte limit/i);
+  });
+
   it('decodes split multibyte sequences leniently', async () => {
     const encoded = new TextEncoder().encode('héllo');
     const response: HttpResponseLike = {
@@ -66,5 +77,35 @@ describe('readCapped', () => {
       text: async () => '',
     };
     await expect(readCapped(response, 100)).resolves.toBe('héllo');
+  });
+
+  it('rejects when the reader errors mid-stream', async () => {
+    const response: HttpResponseLike = {
+      status: 200,
+      ok: true,
+      headers: { get: () => null },
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('ab'));
+          controller.error(new Error('socket reset mid-stream'));
+        },
+      }),
+      text: async () => '',
+    };
+    await expect(readCapped(response, 100)).rejects.toThrow(/socket reset mid-stream/);
+  });
+
+  it('decodes invalid UTF-8 bytes to U+FFFD instead of throwing', async () => {
+    const response: HttpResponseLike = {
+      status: 200,
+      ok: true,
+      headers: { get: () => null },
+      body: streamOf([new Uint8Array([0x61, 0xff, 0xfe, 0x62])]),
+      text: async () => '',
+    };
+    const text = await readCapped(response, 100);
+    expect(text.startsWith('a')).toBe(true);
+    expect(text.endsWith('b')).toBe(true);
+    expect(text).toContain('\uFFFD');
   });
 });

@@ -26,7 +26,10 @@ export function toMarkdown(html: string): string {
 
 const TRUNCATION_MARKER = '\n\n[Content truncated]';
 
-export function truncate(text: string, maxChars: number): { content: string; truncated: boolean } {
+export function truncateWithMarker(
+  text: string,
+  maxChars: number,
+): { content: string; truncated: boolean } {
   const limit = Math.max(0, Math.floor(maxChars));
   if (text.length <= limit) return { content: text, truncated: false };
   const budget = Math.max(0, limit - TRUNCATION_MARKER.length);
