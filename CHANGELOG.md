@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Security policy (`SECURITY.md`): private vulnerability reporting via GitHub, supported versions and scope.
+
+### Changed
+
+- Streamable HTTP documentation moved from the README to [docs/http.md](docs/http.md); the README keeps a short overview.
+
 ## [0.3.1] - 2026-09-20
 
 ### Security
