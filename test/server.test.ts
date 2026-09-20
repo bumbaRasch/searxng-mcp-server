@@ -168,8 +168,8 @@ describe('createServer wiring', () => {
 });
 
 describe('every tool answers over transport', () => {
-  const fetchImpl = asFetchLike(async (url: string | URL | Request) => {
-    const target = String(url);
+  const fetchImpl = asFetchLike(async (url: string) => {
+    const target = url;
     if (target.endsWith('/config')) {
       return new Response(
         JSON.stringify({
