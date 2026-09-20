@@ -134,19 +134,20 @@ describe('createServer wiring', () => {
   });
 
   it('runs a successful tools/call with injected fetch over transport', async () => {
-    const fetchImpl = asFetchLike(async () =>
-      new Response(
-        JSON.stringify({
-          query: 'rust async',
-          results: [{ title: 't', url: 'https://r.test/x', content: 'c' }],
-          answers: [],
-          corrections: [],
-          infoboxes: [],
-          suggestions: [],
-          unresponsiveEngines: [],
-        }),
-        { status: 200 },
-      ),
+    const fetchImpl = asFetchLike(
+      async () =>
+        new Response(
+          JSON.stringify({
+            query: 'rust async',
+            results: [{ title: 't', url: 'https://r.test/x', content: 'c' }],
+            answers: [],
+            corrections: [],
+            infoboxes: [],
+            suggestions: [],
+            unresponsiveEngines: [],
+          }),
+          { status: 200 },
+        ),
     );
     const responses = await rpc(
       [

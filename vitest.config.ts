@@ -8,7 +8,13 @@ export default defineConfig({
       provider: 'v8',
       include: ['src'],
       reporter: ['text', 'html'],
-      thresholds: { autoUpdate: true, lines: 95.03, functions: 87.12, branches: 87.33, statements: 93.06 },
+      thresholds: {
+        autoUpdate: true,
+        lines: 95.03,
+        functions: 87.12,
+        branches: 87.33,
+        statements: 93.06,
+      },
     },
   },
 });
