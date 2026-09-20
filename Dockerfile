@@ -4,7 +4,7 @@
 # Streamable HTTP instead — see docker-compose.http.yml for a reverse-proxy
 # example.
 
-FROM docker.io/library/node:22-slim AS build
+FROM docker.io/library/node:24-slim AS build
 WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml ./
@@ -12,7 +12,7 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 RUN pnpm build && pnpm prune --prod
 
-FROM docker.io/library/node:22-slim
+FROM docker.io/library/node:24-slim
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=build /app/package.json /app/pnpm-lock.yaml ./
