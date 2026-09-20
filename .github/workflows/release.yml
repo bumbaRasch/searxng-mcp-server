@@ -20,6 +20,9 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Build before publish so npm's bin validation finds dist/index.js
+      # (prepublishOnly re-runs the gate, but only after that validation).
+      - run: pnpm build
       - run: npm publish --provenance
       - run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
         env:
