@@ -3,7 +3,7 @@ import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { parseTransportArgv } from './argv.js';
-import { loadConfig, type Config } from './config.js';
+import { assertHttpBindSafety, loadConfig, type Config } from './config.js';
 import { startHttpServer } from './http-server.js';
 import { SERVER_NAME, createServer } from './server.js';
 import { VERSION } from './version.js';
@@ -13,6 +13,7 @@ export async function main(): Promise<void> {
   const argTransport = parseTransportArgv(process.argv.slice(2));
   const config = loadConfig(process.env, VERSION, console.error);
   const transport = argTransport ?? config.transport;
+  assertHttpBindSafety(transport, config);
   const close = transport === 'http' ? await startHttp(config) : await startStdio(config);
 
   let shuttingDown = false;

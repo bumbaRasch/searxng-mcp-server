@@ -153,12 +153,16 @@ export function loadConfig(env: Env, version: string, warn: Warn = () => {}): Co
   if (env.SEARXNG_AUTH_TOKEN && env.SEARXNG_AUTH_TOKEN.trim() !== '') {
     config.authToken = env.SEARXNG_AUTH_TOKEN;
   }
-  // Unlike the warn-and-fallback parsing above, an insecure combination
-  // must not start the server at all.
-  if (config.transport === 'http' && !LOCAL_HOSTS.has(config.host) && !config.authToken) {
+  assertHttpBindSafety(config.transport, config);
+  return config;
+}
+
+/** Non-localhost HTTP without an auth token must refuse to start — checked
+ * against the EFFECTIVE transport (env or --transport flag). */
+export function assertHttpBindSafety(transport: Transport, config: Config): void {
+  if (transport === 'http' && !LOCAL_HOSTS.has(config.host) && !config.authToken) {
     throw new Error(
       `HOST=${config.host} binds to a non-localhost interface; set SEARXNG_AUTH_TOKEN or bind HOST to 127.0.0.1/localhost/::1`,
     );
   }
-  return config;
 }

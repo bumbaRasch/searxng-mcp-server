@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { loadConfig } from '../src/config.js';
+import { parseTransportArgv } from '../src/argv.js';
+import { assertHttpBindSafety, loadConfig } from '../src/config.js';
+import { makeConfig } from './helpers.js';
 
 describe('loadConfig', () => {
   it('applies defaults for an empty environment', () => {
@@ -245,5 +247,23 @@ describe('non-localhost HTTP bind guard', () => {
       message = error instanceof Error ? error.message : String(error);
     }
     expect(message).not.toContain('   ');
+  });
+});
+
+describe('assertHttpBindSafety (effective transport)', () => {
+  it('refuses the flag-transport bypass: --transport http on a non-localhost bind without a token', () => {
+    const config = { ...makeConfig(), host: '0.0.0.0' };
+    const viaFlag = parseTransportArgv(['--transport', 'http']);
+    expect(viaFlag).toBe('http');
+    expect(() => assertHttpBindSafety(viaFlag ?? 'stdio', config)).toThrow(/SEARXNG_AUTH_TOKEN/);
+  });
+
+  it('allows the same bind with an auth token, localhost without one, and stdio always', () => {
+    const exposed = { ...makeConfig(), host: '0.0.0.0', authToken: 't' };
+    expect(() => assertHttpBindSafety('http', exposed)).not.toThrow();
+    expect(() =>
+      assertHttpBindSafety('http', { ...makeConfig(), host: '127.0.0.1' }),
+    ).not.toThrow();
+    expect(() => assertHttpBindSafety('stdio', { ...makeConfig(), host: '0.0.0.0' })).not.toThrow();
   });
 });
