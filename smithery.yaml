@@ -1,0 +1,18 @@
+# Smithery configuration: https://smithery.ai/docs/config#smitheryyaml
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      searxngUrl:
+        type: string
+        default: 'http://localhost:8888'
+        description: Base URL of the SearXNG instance
+  commandFunction: |-
+    (config) => ({
+      command: 'npx',
+      args: ['-y', 'searxng-mcp-server'],
+      env: { SEARXNG_URL: config.searxngUrl }
+    })
+  exampleConfig:
+    searxngUrl: 'http://localhost:8888'
