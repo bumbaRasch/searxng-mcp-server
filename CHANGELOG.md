@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-09-20
 
 ### Added
 
@@ -44,6 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bundled SearXNG Docker stack (pinned image, loopback-only) and end-to-end verification script.
 - 260 unit tests, CI matrix (Node 22.19/24/26), type-aware linting, coverage.
 
+[Unreleased]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/bumbaRasch/searxng-mcp-server/releases/tag/v0.2.0
 [0.1.2]: https://github.com/bumbaRasch/searxng-mcp-server/releases/tag/v0.1.2
 [0.1.1]: https://www.npmjs.com/package/searxng-mcp-server/v/0.1.1
 [0.1.0]: https://www.npmjs.com/package/searxng-mcp-server/v/0.1.0
