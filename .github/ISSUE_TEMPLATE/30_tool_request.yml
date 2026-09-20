@@ -1,0 +1,38 @@
+name: Tool request
+description: Request a new search tool or media category over SearXNG
+title: '[Tool]: '
+labels: [tool request]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Request a new search tool exposed by this MCP server, backed by a SearXNG category or engine.
+        Existing tools — web (`search`), images, news, video, music, page fetch.
+  - type: input
+    id: category
+    attributes:
+      label: SearXNG category or engine
+      description: The exact category or engine name from SearXNG.
+      placeholder: e.g. it, files, science, or an engine name like openalex
+    validations:
+      required: true
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Why do you need it?
+      description: What would you ask your MCP client to do with this tool?
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: API / fetch details
+      description: Category params, API URL, example response... Leave blank if you don't know.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I verified that SearXNG returns results for this category or engine
+          required: true
