@@ -1,7 +1,8 @@
 name: searxng
 services:
   searxng:
-    image: docker.io/searxng/searxng:latest
+    # Pinned tag: JSON API behavior verified against this build.
+    image: docker.io/searxng/searxng:2026.8.22-9fea41204
     restart: unless-stopped
     # Loopback-only: the MCP server runs on the same host. The JSON API is
     # unauthenticated; do NOT bind this port to a public interface.

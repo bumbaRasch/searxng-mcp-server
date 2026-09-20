@@ -1,6 +1,6 @@
-# searxng-mcp-ts — Design
+# searxng-mcp-server — Design
 
-`searxng-mcp-ts` is a Model Context Protocol (MCP) server, written in
+`searxng-mcp-server` is a Model Context Protocol (MCP) server, written in
 TypeScript, that exposes a self-hosted [SearXNG](https://github.com/searxng/searxng)
 instance to MCP clients (OpenCode, Claude, Cursor, …). It provides six tools:
 
@@ -21,7 +21,7 @@ Docker (loopback-only) and is configured to expose its JSON API.
 MCP client
       │  stdio (JSON-RPC)
       ▼
-searxng-mcp-ts (node dist/index.js)
+searxng-mcp-server (node dist/index.js)
       │                        │
       │ HTTP /search?format=json│ HTTP GET (arbitrary URL)
       ▼                        ▼
@@ -37,7 +37,7 @@ category-specialized wrappers over the same SearXNG client
 (`fetchSearchJson` + dedicated projections); they never download media —
 only URL strings (`thumbnailSrc`/`audioSrc` are hooks for future embedded
 previews). Dates pass through `pickPublishedDate` (SearXNG leaks the string
-`'None'` for missing dates) and durations through `pickLength` (numeric
+`'None'` for missing dates) and durations through `normalizeDuration` (numeric
 seconds are normalized to `M:SS`/`H:MM:SS`).
 
 ## Module layout
@@ -58,10 +58,17 @@ seconds are normalized to `M:SS`/`H:MM:SS`).
 | `src/config.ts` | env parsing + defaults (warns on stderr for invalid `SEARXNG_URL`) |
 | `src/version.ts` | `VERSION` constant (kept in sync with package.json by a test) |
 
-Dependency direction: `config`, `schemas`, `http`, `ssrf` are leaves;
-`extract`/`markdown` ← `fetch`; `schemas` ← (`searxng`, `format`) ← `tools` ←
-`server` ← `index`. All network seams (`FetchLike`, DNS `lookup`) are
-injectable, so the whole surface is unit-testable without monkey-patching.
+Dependency direction (per-module, as imported): `config`, `schemas`, `http`,
+`ssrf`, `extract`, `markdown` and `version` are leaves. Above them:
+`format` → `schemas`; `searxng` → `http`/`config`/`schemas`; `fetch` →
+`config`/`ssrf`/`extract`/`markdown`/`http`/`schemas`; `tools` →
+`config`/`fetch`/`format`/`schemas`/`searxng` plus type-only imports of
+`http` (`FetchLike`) and `ssrf` (`LookupAll`), and the MCP SDK; `server` →
+`config`/`tools`/`version` (+ MCP); `index` → `config`/`server`/`version`
+(+ MCP stdio transport). All network seams (`FetchLike`, DNS `lookup`) are
+injectable — including at the MCP boundary, where `ToolDeps` threads them
+from `registerTools`/`createServer` — so the whole surface is unit-testable
+without monkey-patching.
 
 ## SearXNG JSON API notes
 
@@ -96,10 +103,20 @@ no API keys.
   dispatcher hook, so DNS rebinding between check and connect is re-checked.
   Every redirect hop is re-validated; https→http downgrades are refused;
   redirects are capped; `ALLOW_PRIVATE_HOSTS=true` opts out deliberately.
+  The search path, whose target is operator config rather than an arbitrary
+  URL, refuses redirects outright (`redirect: 'manual'` — any redirect
+  response is an error, so `SEARXNG_URL` must point directly at the instance).
 - **Bounded resources**: one `AbortController` per logical request spanning
   all hops; streamed reads capped at `MAX_RESPONSE_BYTES` (applied to
-  decompressed bytes); output capped at `MAX_CHARS`; per-call `timeout_ms`
-  bounded to 120 s.
+  decompressed bytes); non-textual Content-Types are refused on
+  `fetch_content`: the gate allows the `text/*` family, `application/json`,
+  `application/xml`, and any `application/*+xml` type — exact tokens with a
+  parameter boundary, so prefix siblings like `application/xml-dtd` are
+  refused; responses without a Content-Type header are treated as textual;
+  output capped at `MAX_CHARS`; per-call `timeout_ms` bounded to 120 s.
+  Residual risk: HTML parsing (Readability + turndown) runs synchronously on
+  the event loop — a hostile page can stall the server for the parse
+  duration — but the input is bounded by the 5 MiB response cap.
 - **Prompt-injection mitigation**: all web-derived text is wrapped in an
   untrusted-content banner; embedded close markers *and forged open markers*
   (including zero-width/control-character gaps) are neutralized; meta fields
@@ -108,12 +125,15 @@ no API keys.
   that reflect attacker-controlled strings are sanitized identically.
   Residual risk: fuzzy near-markers (e.g. `UNTRUSTED_WEB_CONTENT > > >`) are
   NOT neutralized — the guarantee is scoped to the exact marker strings.
-  `structuredContent` is raw data by design — clients that render it get no
+  `structuredContent` string values are marker-defused — the same
+  close/forged-open neutralization recurses through arrays and objects —
+  but carry no banner: clients that render structured data directly get no
   wrapper.
 - **Secrets**: `SEARXNG_USERNAME`/`SEARXNG_PASSWORD` are used only to build
   the `Authorization` header; error messages surface only the sanitized
   origin of `SEARXNG_URL` (embedded credentials are stripped at config load);
   nothing is ever logged to stdout (JSON-RPC only).
+- **Lifecycle**: Shutdown is bounded by `SHUTDOWN_TIMEOUT_MS` (default 5 s, minimum 100 ms): if a graceful `close()` does not finish within it — or a second signal arrives — the process exits immediately with code 0.
 
 ## Non-goals
 

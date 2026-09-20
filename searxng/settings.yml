@@ -1,20 +1,17 @@
-# Loopback-only local instance (docker-compose.yml binds 127.0.0.1 and the
-# limiter is off). If you ever expose this instance publicly, enable the
-# limiter and add a valkey service — see https://docs.searxng.org.
+# Loopback-only instance (compose binds 127.0.0.1, limiter off). If ever exposed
+# publicly: enable the limiter + add valkey — https://docs.searxng.org
 use_default_settings: true
 server:
   limiter: false
 general:
-  instance_name: 'searxng-mcp-ts'
+  instance_name: 'searxng-mcp-server'
 search:
   formats:
     - html
     - json
 
-# Engine-specific API keys are configured HERE (not in the MCP server).
-# Example — OpenAlex deprecated the `mailto` polite pool in February 2026 and
-# requires an API key for the higher daily quota (free account):
-# https://github.com/searxng/searxng/issues/6513
+# Engine API keys live HERE, not in the MCP server. OpenAlex has required a key
+# since Feb 2026 (mailto pool removed): https://github.com/searxng/searxng/issues/6513
 # engines:
 #   - name: openalex
 #     api_key: 'replace-with-your-openalex-api-key'
