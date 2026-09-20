@@ -1,0 +1,83 @@
+name: Bug report
+description: Something is broken
+title: '[Bug]: '
+labels: [bug, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug.
+        Check the [Troubleshooting section](https://github.com/bumbaRasch/searxng-mcp-server#troubleshooting)
+        first — 403 errors and startup failures are almost always configuration issues.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear and precise description of the bug.
+      placeholder: The search tool returned empty results for ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      placeholder: The same call should return ranked results.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: As minimally and precisely as possible. Include the tool call that failed.
+      placeholder: |
+        search "rust async" → got error X
+    validations:
+      required: true
+  - type: dropdown
+    id: client
+    attributes:
+      label: Which MCP client?
+      options:
+        - Claude Desktop
+        - Claude Code
+        - Cursor
+        - VS Code
+        - OpenCode
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: hosting
+    attributes:
+      label: How is SearXNG hosted?
+      options:
+        - Bundled docker-compose (this repo)
+        - Own SearXNG in Docker
+        - Own SearXNG (other)
+        - Public instance
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Server version
+      description: Run `npm ls searxng-mcp-server` or check your MCP config. If you use `npx -y`, enter "latest".
+      placeholder: e.g. 0.1.0, or "latest" if installed via npx -y
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: The server logs to stderr. If you don't know how to view them, leave this blank — see the Troubleshooting section.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and found no duplicate
+          required: true
+        - label: I read the Troubleshooting section and my issue is not listed there
+          required: true
