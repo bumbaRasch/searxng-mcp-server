@@ -107,7 +107,8 @@ Hard-to-discover facts encoded in `src/searxng.ts` (verified against
   `suggestions`, `unresponsive_engines`. There is **no** `number_of_results`.
 - `answers[]` are **objects** (`Answer.as_dict()`, `{answer, url?, engine?}`),
   not plain strings.
-- `unresponsive_engines[]` are **`[engine, message]` tuples**, not names.
+- `unresponsive_engines[]` are **`[engine, message]` pairs**, not names (projected as
+  fixed-length `string[2]`, not `z.tuple`, so draft-07-only clients can validate it).
 - `engines` (comma-separated) **is** parsed from the query string even though
   it is absent from the public API docs; `categories` are validated server-side
   (unknown values dropped); `time_range` is validated in `parse_time_range`.
