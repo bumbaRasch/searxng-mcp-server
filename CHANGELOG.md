@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Streamable HTTP documentation moved from the README to [docs/http.md](docs/http.md); the README keeps a short overview.
 
+### Fixed
+
+- Search-like tools (`search`, `image_search`, `news_search`, `video_search`, `music_search`) no longer fail with `-32602 InvalidParams` when SearXNG reports unresponsive engines: `unresponsiveEngines` now compiles to a plain fixed-length string array instead of a JSON Schema 2020-12 tuple (`prefixItems` + `items: false`) that draft-07-only clients reject.
+
 ## [0.3.1] - 2026-09-20
 
 ### Security

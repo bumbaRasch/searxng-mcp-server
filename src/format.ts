@@ -82,7 +82,7 @@ export function formatSearchResults(response: SearchResponse): string {
     lines.push(
       '',
       `Unresponsive engines: ${response.unresponsiveEngines
-        .map(([engine, message]) => `${sanitizeMeta(engine)} (${sanitizeMeta(message)})`)
+        .map(([engine = '', message = '']) => `${sanitizeMeta(engine)} (${sanitizeMeta(message)})`)
         .join(', ')}`,
     );
   }

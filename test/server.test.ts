@@ -109,6 +109,8 @@ describe('createServer wiring', () => {
     for (const tool of listing?.tools ?? []) {
       expect(tool.outputSchema).toBeDefined();
       expect(Array.isArray(tool.icons)).toBe(true);
+      // Tuple output compiles to items:false, which draft-07-only clients reject.
+      expect(JSON.stringify(tool.outputSchema)).not.toContain('"items":false');
     }
   });
 

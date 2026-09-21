@@ -40,7 +40,8 @@ const commonCategoryArgs = {
 
 const responseTail = {
   suggestions: z.array(z.string()),
-  unresponsiveEngines: z.array(z.tuple([z.string(), z.string()])),
+  // Array of pairs, not z.tuple: tuple compiles to items:false, which some clients reject.
+  unresponsiveEngines: z.array(z.array(z.string()).length(2)),
 };
 
 export const searchInput = z.object({

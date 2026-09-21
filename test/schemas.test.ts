@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import * as z from 'zod/v4';
 import {
   imageSearchInput,
   imageSearchOutput,
@@ -9,6 +10,7 @@ import {
   newsSearchInput,
   newsSearchOutput,
   searchInput,
+  searchOutput,
   toImageSearchParams,
   toMusicSearchParams,
   toNewsSearchParams,
@@ -235,5 +237,28 @@ describe('listEngines schemas', () => {
     expect(listEnginesOutput.safeParse({ ...response, engines: [{ name: 'x' }] }).success).toBe(
       false,
     );
+  });
+});
+
+interface JsonSchemaNode {
+  type?: string;
+  items?: JsonSchemaNode | boolean;
+  minItems?: number;
+  maxItems?: number;
+  properties?: Record<string, JsonSchemaNode>;
+}
+
+describe('output schemas are validatable by draft-07-only clients', () => {
+  it('models unresponsiveEngines as a plain fixed-length string array, not a tuple', () => {
+    // z.tuple -> prefixItems/items:false, which draft-07-only clients reject.
+    const json = z.toJSONSchema(searchOutput) as JsonSchemaNode;
+    const pair = json.properties?.unresponsiveEngines?.items;
+    expect(pair).not.toBe(false);
+    expect(pair).toEqual({
+      type: 'array',
+      items: { type: 'string' },
+      minItems: 2,
+      maxItems: 2,
+    });
   });
 });
