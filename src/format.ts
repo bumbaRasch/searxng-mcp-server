@@ -1,9 +1,11 @@
 import {
   sanitizeMeta,
   sanitizeUntrusted,
+  truncateText,
   UNTRUSTED_WARNING,
   UNTRUSTED_OPEN,
   UNTRUSTED_CLOSE,
+  type DetailLevel,
 } from './categories/shared.js';
 import type { CategoryDefinition, CategoryEnvelope } from './categories/types.js';
 import { generalCategory } from './categories/general.js';
@@ -18,9 +20,13 @@ import {
   type ListEnginesResponse,
   type MusicSearchResponse,
   type NewsSearchResponse,
+  type SearchBatchResponse,
   type SearchResponse,
   type VideoSearchResponse,
 } from './schemas.js';
+
+/** Compact mode keeps the snippet to roughly one line (D6). */
+const COMPACT_SNIPPET_CHARS = 160;
 
 export { sanitizeMeta, sanitizeUntrusted };
 
@@ -60,20 +66,46 @@ export function sanitizeToolError(message: string): string {
   return sanitizeMeta(message);
 }
 
-export function formatSearchResults(response: SearchResponse): string {
+/** Compact per-result rendering: title (in the heading) + URL + capped snippet (D6). */
+function compactResultLines(result: { url: string; content?: string }): string[] {
+  const lines: string[] = [sanitizeMeta(result.url)];
+  if (result.content) lines.push('', truncateText(result.content, COMPACT_SNIPPET_CHARS));
+  return lines;
+}
+
+export function formatSearchResults(response: SearchResponse, detail?: DetailLevel): string {
   const lines: string[] = [`# Search results for "${sanitizeMeta(response.query)}"`];
+  lines.push(renderSearchBody(response, detail));
+  return lines.join('\n').trim();
+}
+
+export function formatSearchBatchResults(
+  response: SearchBatchResponse,
+  detail?: DetailLevel,
+): string {
+  const lines: string[] = [`# Search results for ${response.batch.length} queries`];
+  response.batch.forEach((entry, index) => {
+    lines.push('', `## Query ${index + 1}: "${sanitizeMeta(entry.query)}"`);
+    lines.push(renderSearchBody(entry, detail));
+  });
+  return lines.join('\n').trim();
+}
+
+/** Wrapped body shared by the single and batch renderers (detail affects markdown only). */
+function renderSearchBody(response: SearchResponse, detail?: DetailLevel): string {
+  const body: string[] = [];
 
   if (response.answers.length > 0) {
-    lines.push(
+    body.push(
       '',
       `Answers: ${response.answers.map((answer) => sanitizeMeta(answer.answer)).join(' | ')}`,
     );
   }
   if (response.corrections.length > 0) {
-    lines.push('', `Corrections: ${response.corrections.map(sanitizeMeta).join(', ')}`);
+    body.push('', `Corrections: ${response.corrections.map(sanitizeMeta).join(', ')}`);
   }
   if (response.unresponsiveEngines.length > 0) {
-    lines.push(
+    body.push(
       '',
       `Unresponsive engines: ${response.unresponsiveEngines
         .map(([engine = '', message = '']) => `${sanitizeMeta(engine)} (${sanitizeMeta(message)})`)
@@ -81,7 +113,6 @@ export function formatSearchResults(response: SearchResponse): string {
     );
   }
 
-  const body: string[] = [];
   if (response.results.length === 0 && response.infoboxes.length === 0) body.push('No results.');
 
   response.infoboxes.forEach((box, index) => {
@@ -100,7 +131,9 @@ export function formatSearchResults(response: SearchResponse): string {
     body.push(
       '',
       `## ${index + 1}. ${sanitizeMeta(result.title) || '(untitled)'}`,
-      ...generalCategory.renderResultLines(result),
+      ...(detail === 'compact'
+        ? compactResultLines(result)
+        : generalCategory.renderResultLines(result)),
     );
   });
 
@@ -108,8 +141,7 @@ export function formatSearchResults(response: SearchResponse): string {
     body.push('', `Did you mean: ${response.suggestions.map(sanitizeMeta).join(', ')}`);
   }
 
-  lines.push(wrapUntrusted(body.join('\n')));
-  return lines.join('\n').trim();
+  return wrapUntrusted(body.join('\n'));
 }
 
 export function formatFetchedPage(response: FetchResult): string {
@@ -121,10 +153,12 @@ export function formatFetchedPage(response: FetchResult): string {
   return lines.join('\n').trim();
 }
 
-/** Shared category skeleton; per-result lines come from the definition (D1). */
-export function formatCategoryResults<R extends { title: string }>(
+/** Shared category skeleton; per-result lines come from the definition (D1).
+ * `detail: 'compact'` swaps them for title + URL + capped snippet. */
+export function formatCategoryResults<R extends { title: string; url: string; content?: string }>(
   definition: CategoryDefinition<R>,
   response: Pick<CategoryEnvelope<R>, 'query' | 'results' | 'suggestions'>,
+  detail?: DetailLevel,
 ): string {
   const lines: string[] = [`# ${definition.heading} results for "${sanitizeMeta(response.query)}"`];
   const body: string[] = [];
@@ -134,7 +168,7 @@ export function formatCategoryResults<R extends { title: string }>(
     body.push(
       '',
       `## ${index + 1}. ${sanitizeMeta(result.title) || '(untitled)'}`,
-      ...definition.renderResultLines(result),
+      ...(detail === 'compact' ? compactResultLines(result) : definition.renderResultLines(result)),
     );
   });
 
@@ -146,20 +180,20 @@ export function formatCategoryResults<R extends { title: string }>(
   return lines.join('\n').trim();
 }
 
-export function formatImageResults(response: ImageSearchResponse): string {
-  return formatCategoryResults(imageCategory, response);
+export function formatImageResults(response: ImageSearchResponse, detail?: DetailLevel): string {
+  return formatCategoryResults(imageCategory, response, detail);
 }
 
-export function formatNewsResults(response: NewsSearchResponse): string {
-  return formatCategoryResults(newsCategory, response);
+export function formatNewsResults(response: NewsSearchResponse, detail?: DetailLevel): string {
+  return formatCategoryResults(newsCategory, response, detail);
 }
 
-export function formatVideoResults(response: VideoSearchResponse): string {
-  return formatCategoryResults(videoCategory, response);
+export function formatVideoResults(response: VideoSearchResponse, detail?: DetailLevel): string {
+  return formatCategoryResults(videoCategory, response, detail);
 }
 
-export function formatMusicResults(response: MusicSearchResponse): string {
-  return formatCategoryResults(musicCategory, response);
+export function formatMusicResults(response: MusicSearchResponse, detail?: DetailLevel): string {
+  return formatCategoryResults(musicCategory, response, detail);
 }
 
 export function formatListEngines(response: ListEnginesResponse): string {

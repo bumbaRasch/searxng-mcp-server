@@ -137,4 +137,21 @@ describe('buildCategoryEnvelope', () => {
     expect(buildCategoryEnvelope('nope', 5, project)).toEqual(empty);
     expect(buildCategoryEnvelope(dirty, -3, project).results).toEqual([]);
   });
+
+  it('applies the keep filter after projection but before the slice', () => {
+    const raw = {
+      results: [
+        { title: 'a', url: 'https://a.test' },
+        { title: 'b', url: 'https://b.test' },
+        { title: 'c', url: 'https://c.test' },
+      ],
+    };
+    const envelope = buildCategoryEnvelope(
+      raw,
+      2,
+      project,
+      (item) => item.url !== 'https://b.test',
+    );
+    expect(envelope.results.map((item) => item.title)).toEqual(['a', 'c']);
+  });
 });

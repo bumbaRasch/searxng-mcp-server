@@ -12,6 +12,7 @@ import {
   musicSearch,
   newsSearch,
   search,
+  searchBatch,
   SearxngError,
   videoSearch,
 } from '../src/searxng.js';
@@ -232,6 +233,71 @@ describe('mapSearchResponse', () => {
   });
 });
 
+describe('min_score pre-slice filter', () => {
+  const raw = {
+    query: 'q',
+    results: [
+      { title: 'high', url: 'https://h.test', content: 'c', score: 5 },
+      { title: 'low', url: 'https://l.test', content: 'c', score: 0.5 },
+      { title: 'unscored', url: 'https://u.test', content: 'c' },
+      { title: 'mid', url: 'https://m.test', content: 'c', score: 2 },
+    ],
+  };
+
+  it('keeps scored results at or above the threshold plus unscored ones', () => {
+    expect(mapSearchResponse(raw, 10, 2).results.map((result) => result.title)).toEqual([
+      'high',
+      'unscored',
+      'mid',
+    ]);
+  });
+
+  it('filters before the max_results slice', () => {
+    // Slicing first would keep [high, low]; filtering first keeps [high, unscored].
+    expect(mapSearchResponse(raw, 2, 2).results.map((result) => result.title)).toEqual([
+      'high',
+      'unscored',
+    ]);
+  });
+
+  it('keeps everything when min_score is absent', () => {
+    expect(mapSearchResponse(raw, 10).results).toHaveLength(4);
+  });
+});
+
+describe('web optional fields (metadata, thumbnailSrc)', () => {
+  it('projects metadata and thumbnail, dropping garbage-typed and blank values', () => {
+    const res = mapSearchResponse(
+      {
+        query: 'q',
+        results: [
+          {
+            title: 'full',
+            url: 'https://f.test',
+            content: 'c',
+            metadata: 'Example.com · updated 2 days ago',
+            thumbnail: 'https://t.test/1',
+          },
+          { title: 'garbage', url: 'https://g.test', content: 'c', metadata: 42, thumbnail: 7 },
+          { title: 'blank', url: 'https://b.test', content: 'c', metadata: '', thumbnail: '   ' },
+        ],
+      },
+      10,
+    );
+    expect(res.results[0]).toEqual({
+      title: 'full',
+      url: 'https://f.test',
+      content: 'c',
+      metadata: 'Example.com · updated 2 days ago',
+      thumbnailSrc: 'https://t.test/1',
+    });
+    expect(res.results[1]).not.toHaveProperty('metadata');
+    expect(res.results[1]).not.toHaveProperty('thumbnailSrc');
+    expect(res.results[2]).not.toHaveProperty('metadata');
+    expect(res.results[2]).not.toHaveProperty('thumbnailSrc');
+  });
+});
+
 const config = makeConfig({ maxChars: 1000, maxResponseBytes: 1000, allowPrivateHosts: false });
 
 describe('search', () => {
@@ -414,6 +480,44 @@ describe('mapImageResponse', () => {
     expect(mapImageResponse(raw, 1).results).toHaveLength(1);
     expect(imageSearchOutput.safeParse(full).success).toBe(true);
   });
+
+  it('projects filesize and formats, dropping garbage-typed values', () => {
+    const res = mapImageResponse(
+      {
+        query: 'q',
+        suggestions: [],
+        unresponsive_engines: [],
+        results: [
+          {
+            title: 'full',
+            url: 'https://f.test',
+            img_src: 'https://i.test/1.png',
+            filesize: 15360,
+            formats: ['png', 'jpeg', 42, null],
+          },
+          {
+            title: 'garbage',
+            url: 'https://g.test',
+            img_src: 'https://i.test/2.png',
+            filesize: 'big',
+            formats: 'png',
+          },
+          {
+            title: 'negative',
+            url: 'https://n.test',
+            img_src: 'https://i.test/3.png',
+            filesize: -5,
+          },
+        ],
+      },
+      10,
+    );
+    expect(res.results[0]?.filesize).toBe(15360);
+    expect(res.results[0]?.formats).toEqual(['png', 'jpeg']);
+    expect(res.results[1]?.filesize).toBeUndefined();
+    expect(res.results[1]?.formats).toBeUndefined();
+    expect(res.results[2]?.filesize).toBeUndefined();
+  });
 });
 
 describe('engines array caps', () => {
@@ -546,6 +650,81 @@ describe("publishedDate 'None' quirk is filtered everywhere", () => {
         10,
       ).results[0]?.publishedDate,
     ).toBe('2025-07-16');
+  });
+});
+
+describe('video optional fields (views, iframeSrc)', () => {
+  const base = { query: 'q', suggestions: [], unresponsive_engines: [] };
+
+  it('projects views and iframe_src, dropping garbage-typed values', () => {
+    const res = mapVideoResponse(
+      {
+        ...base,
+        results: [
+          {
+            title: 'full',
+            url: 'https://f.test',
+            views: 12345,
+            iframe_src: 'https://embed.test/1',
+          },
+          { title: 'garbage', url: 'https://g.test', views: '12k', iframe_src: 42 },
+          { title: 'negative', url: 'https://n.test', views: -1 },
+        ],
+      },
+      10,
+    );
+    expect(res.results[0]?.views).toBe(12345);
+    expect(res.results[0]?.iframeSrc).toBe('https://embed.test/1');
+    expect(res.results[1]?.views).toBeUndefined();
+    expect(res.results[1]?.iframeSrc).toBeUndefined();
+    expect(res.results[2]?.views).toBeUndefined();
+  });
+
+  it('music stays without the video-only fields', () => {
+    const res = mapMusicResponse(
+      {
+        ...base,
+        results: [{ title: 's', url: 'https://s.test', views: 10, iframe_src: 'https://e.test' }],
+      },
+      10,
+    );
+    expect(res.results[0]).not.toHaveProperty('views');
+    expect(res.results[0]).not.toHaveProperty('iframeSrc');
+    expect(musicSearchOutput.safeParse(res).success).toBe(true);
+  });
+});
+
+describe('searchBatch', () => {
+  it('fans out concurrently and returns one response per query in input order', async () => {
+    const seen: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      seen.push(url);
+      const query = new URL(url).searchParams.get('q');
+      return jsonResponse({
+        query,
+        results: [{ title: `R:${query}`, url: 'https://r.test/x', content: 'c' }],
+      });
+    }) as unknown as FetchLike;
+    const res = await searchBatch(
+      config,
+      ['alpha', 'beta', 'gamma'],
+      { query: 'unused', maxResults: 10 },
+      { fetchImpl },
+    );
+    expect(res.batch.map((entry) => entry.query)).toEqual(['alpha', 'beta', 'gamma']);
+    expect(res.batch.map((entry) => entry.results[0]?.title)).toEqual([
+      'R:alpha',
+      'R:beta',
+      'R:gamma',
+    ]);
+    expect(seen).toHaveLength(3);
+  });
+
+  it('applies the shared timeout error path (SearxngError propagates)', async () => {
+    const fetchImpl = asFetchLike(async () => new Response('nope', { status: 403 }));
+    await expect(
+      searchBatch(config, ['a', 'b'], { query: 'unused', maxResults: 10 }, { fetchImpl }),
+    ).rejects.toThrow(/search\.formats/);
   });
 });
 

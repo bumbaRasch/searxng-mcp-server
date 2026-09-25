@@ -29,6 +29,22 @@ export const timeRangeArg = z
   .enum(['day', 'week', 'month', 'year'])
   .optional()
   .describe('Restrict results by time.');
+export type DetailLevel = 'full' | 'compact';
+export const detailArg = z
+  .enum(['full', 'compact'])
+  .optional()
+  .describe("Response detail: 'full' (default) or 'compact' (title, URL and a short snippet).");
+export const queriesArg = z
+  .array(queryArg)
+  .min(2)
+  .max(5)
+  .optional()
+  .describe('Run 2-5 queries in one call; returns one result set per query in input order.');
+export const minScoreArg = z
+  .number()
+  .min(0)
+  .optional()
+  .describe('Keep results with score >= min_score; unscored results are always kept.');
 export const commonCategoryArgs = {
   query: queryArg,
   engines: enginesArg,
@@ -36,6 +52,7 @@ export const commonCategoryArgs = {
   pageno: pagenoArg,
   safesearch: safesearchArg,
   max_results: maxResultsArg,
+  detail: detailArg,
 };
 
 export const responseTail = {
@@ -92,6 +109,11 @@ export function asStringArray(value: unknown): string[] {
     : [];
 }
 
+/** Counts and sizes are only meaningful as finite non-negative numbers. */
+export function pickCount(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
 export function truncateText(text: string, max: number): string {
   if (text.length <= max) return text;
   // max <= 1 leaves no room for the ellipsis, so hard-slice instead.
@@ -129,11 +151,13 @@ function projectUnresponsive(value: unknown): [string, string] | undefined {
 }
 
 /** Defensive envelope projection: filter garbage first, then apply the limit,
- * so dropped items never consume the maxResults budget. */
+ * so dropped items never consume the maxResults budget. `keep` runs after
+ * projection but before the slice (the min_score seam, D6). */
 export function buildCategoryEnvelope<R>(
   raw: unknown,
   maxResults: number,
   project: (value: unknown) => R | undefined,
+  keep?: (item: R) => boolean,
 ): CategoryEnvelope<R> {
   const data = isRecord(raw) ? raw : {};
   return {
@@ -141,6 +165,7 @@ export function buildCategoryEnvelope<R>(
     results: (Array.isArray(data.results) ? data.results : [])
       .map(project)
       .filter((item): item is R => item !== undefined)
+      .filter((item) => keep?.(item) ?? true)
       .slice(0, Math.max(0, maxResults)),
     suggestions: asStringArray(data.suggestions).slice(0, MAX_ARRAY_ITEMS),
     unresponsiveEngines: (Array.isArray(data.unresponsive_engines) ? data.unresponsive_engines : [])

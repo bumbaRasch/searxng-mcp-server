@@ -35,9 +35,9 @@ export const musicCategory = defineCategory({
     name: 'music_search',
     title: 'Music search (SearXNG)',
     description:
-      'Search the web for music. Returns page links and, when available, direct audio file links (audioSrc).',
+      'Search the web for music. Returns page links and, when available, direct audio file links (audioSrc). Supports a time_range freshness filter.',
   },
-  upstream: { categories: ['music'], supportsTimeRange: false },
+  upstream: { categories: ['music'], supportsTimeRange: true },
   heading: 'Music',
   resultSchema,
   projectResult,

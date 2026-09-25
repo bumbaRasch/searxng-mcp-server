@@ -13,6 +13,7 @@ import {
   newsSearchOutput,
   searchInput,
   searchOutput,
+  searchToolOutput,
   videoSearchInput,
   videoSearchOutput,
 } from '../src/schemas.js';
@@ -59,6 +60,49 @@ const jsonSearchFetch: FetchLike = async () =>
       headers: { 'content-type': 'application/json' },
     },
   );
+
+const echoFetch: FetchLike = async (url) =>
+  jsonResponse({
+    query: new URL(url).searchParams.get('q'),
+    results: [
+      { title: 'R1', url: 'https://r.test/1', content: 'c' },
+      { title: 'R2', url: 'https://r.test/2', content: 'c' },
+    ],
+  });
+
+const scoredFetch: FetchLike = async () =>
+  jsonResponse({
+    query: 'q',
+    results: [
+      { title: 'high', url: 'https://r.test/h', content: 'c', score: 5 },
+      { title: 'low', url: 'https://r.test/l', content: 'c', score: 0.5 },
+    ],
+  });
+
+const detailedFetch: FetchLike = async () =>
+  jsonResponse({
+    query: 'q',
+    results: [
+      {
+        title: 'T',
+        url: 'https://t',
+        content: 'c'.repeat(500),
+        engine: 'google',
+        publishedDate: '2026-01-01',
+      },
+    ],
+    answers: [],
+    corrections: [],
+    infoboxes: [],
+    suggestions: [],
+    unresponsiveEngines: [],
+  });
+
+const imageJsonFetch: FetchLike = async () =>
+  jsonResponse({
+    query: 'cats',
+    results: [{ title: 'Cat', url: 'https://page.test/c', img_src: 'https://img.test/c.png' }],
+  });
 
 describe('handleSearch', () => {
   it('returns markdown and structured content on success', async () => {
@@ -289,6 +333,110 @@ describe('input schema boundaries', () => {
     expect(searchInput.safeParse({ query: 'q', pageno: 0 }).success).toBe(false);
     expect(searchInput.safeParse({ query: 'q', safesearch: 3 }).success).toBe(false);
     expect(fetchInput.safeParse({ url: 'https://x.test', max_chars: 999 }).success).toBe(false);
+  });
+});
+
+describe('handleSearch batch queries', () => {
+  it('fans out queries in input order and validates against the union output schema', async () => {
+    const result = await handleSearch(config, searchInput.parse({ queries: ['alpha', 'beta'] }), {
+      fetchImpl: echoFetch,
+    });
+    expect(result.isError).toBeUndefined();
+    const structured = result.structuredContent as {
+      batch: { query: string; results: { title: string }[] }[];
+    };
+    expect(structured.batch.map((entry) => entry.query)).toEqual(['alpha', 'beta']);
+    expect(searchToolOutput.safeParse(structured).success).toBe(true);
+    expect(result.content[0]?.text).toContain('## Query 1: "alpha"');
+    expect(result.content[0]?.text).toContain('## Query 2: "beta"');
+  });
+
+  it('applies max_results per query', async () => {
+    const result = await handleSearch(
+      config,
+      searchInput.parse({ queries: ['a', 'b'], max_results: 1 }),
+      { fetchImpl: echoFetch },
+    );
+    const structured = result.structuredContent as {
+      batch: { results: unknown[] }[];
+    };
+    expect(structured.batch).toHaveLength(2);
+    for (const entry of structured.batch) {
+      expect(entry.results).toHaveLength(1);
+    }
+  });
+
+  it('propagates a failing query as a sanitized error for the whole batch', async () => {
+    const result = await handleSearch(config, searchInput.parse({ queries: ['a', 'b'] }), {
+      fetchImpl: async () => new Response('nope', { status: 500 }),
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).not.toContain('UNTRUSTED_WEB_CONTENT>>>');
+  });
+});
+
+describe('handleSearch min_score and detail', () => {
+  it('applies min_score through the handler', async () => {
+    const result = await handleSearch(config, searchInput.parse({ query: 'q', min_score: 2 }), {
+      fetchImpl: scoredFetch,
+    });
+    const structured = result.structuredContent as { results: { title: string }[] };
+    expect(structured.results.map((item) => item.title)).toEqual(['high']);
+  });
+
+  it('keeps structuredContent identical between full and compact detail', async () => {
+    const full = await handleSearch(config, searchInput.parse({ query: 'q' }), {
+      fetchImpl: detailedFetch,
+    });
+    const compact = await handleSearch(
+      config,
+      searchInput.parse({ query: 'q', detail: 'compact' }),
+      { fetchImpl: detailedFetch },
+    );
+    expect(compact.structuredContent).toEqual(full.structuredContent);
+    expect(compact.content[0]?.text).not.toBe(full.content[0]?.text);
+    expect(full.content[0]?.text).toContain('engine: google');
+    expect(compact.content[0]?.text).not.toContain('engine: google');
+    expect(compact.content[0]?.text).toContain('T');
+  });
+
+  it('keeps structuredContent identical between full and compact on media tools', async () => {
+    const full = await handleImageSearch(config, imageSearchInput.parse({ query: 'cats' }), {
+      fetchImpl: imageJsonFetch,
+    });
+    const compact = await handleImageSearch(
+      config,
+      imageSearchInput.parse({ query: 'cats', detail: 'compact' }),
+      { fetchImpl: imageJsonFetch },
+    );
+    expect(compact.structuredContent).toEqual(full.structuredContent);
+    expect(compact.content[0]?.text).not.toContain('Image:');
+  });
+});
+
+describe('image/music time_range parity', () => {
+  it('forwards time_range upstream for images and music', async () => {
+    const seen: string[] = [];
+    const fetchImpl: FetchLike = async (url) => {
+      seen.push(url);
+      return jsonResponse({ query: 'q', results: [] });
+    };
+    await handleImageSearch(
+      config,
+      imageSearchInput.parse({ query: 'cats', time_range: 'month' }),
+      {
+        fetchImpl,
+      },
+    );
+    await handleMusicSearch(
+      config,
+      musicSearchInput.parse({ query: 'nirvana', time_range: 'week' }),
+      { fetchImpl },
+    );
+    expect(seen[0]).toContain('categories=images');
+    expect(seen[0]).toContain('time_range=month');
+    expect(seen[1]).toContain('categories=music');
+    expect(seen[1]).toContain('time_range=week');
   });
 });
 

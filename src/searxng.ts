@@ -23,6 +23,7 @@ import {
   type MusicSearchResponse,
   type NewsSearchResponse,
   type SearchAnswer,
+  type SearchBatchResponse,
   type SearchInfobox,
   type SearchParams,
   type SearchResponse,
@@ -88,8 +89,20 @@ function projectInfobox(value: unknown): SearchInfobox | null {
   return Object.keys(out).length > 0 ? out : null;
 }
 
-export function mapSearchResponse(raw: unknown, maxResults: number): SearchResponse {
-  const envelope = buildCategoryEnvelope(raw, maxResults, generalCategory.projectResult);
+export function mapSearchResponse(
+  raw: unknown,
+  maxResults: number,
+  minScore?: number,
+): SearchResponse {
+  const envelope = buildCategoryEnvelope(
+    raw,
+    maxResults,
+    generalCategory.projectResult,
+    // min_score applies to scored items only; unscored ones always pass (D6).
+    minScore === undefined
+      ? undefined
+      : (item) => item.score === undefined || item.score >= minScore,
+  );
   const data = isRecord(raw) ? raw : {};
   const answers = (Array.isArray(data.answers) ? data.answers : [])
     .map(projectAnswer)
@@ -215,7 +228,20 @@ export async function search(
   opts: { fetchImpl?: FetchLike | undefined } = {},
 ): Promise<SearchResponse> {
   const raw = await fetchSearchJson(config, params, opts);
-  return mapSearchResponse(raw, params.maxResults);
+  return mapSearchResponse(raw, params.maxResults, params.minScore);
+}
+
+/** Batch fan-out: concurrent queries with the shared timeout, input-ordered results (D6). */
+export async function searchBatch(
+  config: Config,
+  queries: string[],
+  params: SearchParams,
+  opts: { fetchImpl?: FetchLike | undefined } = {},
+): Promise<SearchBatchResponse> {
+  const batch = await Promise.all(
+    queries.map((query) => search(config, { ...params, query }, opts)),
+  );
+  return { batch };
 }
 
 /** One generic client path for every registry category: fetch, project, envelope (D1). */

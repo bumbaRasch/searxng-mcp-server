@@ -5,6 +5,7 @@ import {
   formatCategoryResults,
   formatFetchedPage,
   formatListEngines,
+  formatSearchBatchResults,
   formatSearchResults,
   sanitizeToolError,
   sanitizeStructured,
@@ -25,16 +26,18 @@ import {
   listEnginesInput,
   listEnginesOutput,
   searchInput,
-  searchOutput,
+  searchToolOutput,
   toCategorySearchParams,
   toSearchParams,
   type CategoryToolInput,
   type FetchInput,
   type FetchResult,
   type ListEnginesInput,
+  type SearchBatchResponse,
   type SearchInput,
+  type SearchResponse,
 } from './schemas.js';
-import { listEngines, runCategorySearch, SearxngError, search } from './searxng.js';
+import { listEngines, runCategorySearch, SearxngError, search, searchBatch } from './searxng.js';
 
 type ToolResult<T = unknown> = {
   content: { type: 'text'; text: string }[];
@@ -59,13 +62,13 @@ function withUntrustedSuffix(description: string): string {
 function createCategoryHandler<Args, Response>(
   errorLabel: string,
   run: (config: Config, args: Args, deps: ToolDeps) => Promise<Response>,
-  render: (response: Response) => string,
+  render: (response: Response, args: Args) => string,
 ) {
   return async (config: Config, args: Args, deps: ToolDeps = {}): Promise<ToolResult<Response>> => {
     try {
       const response = await run(config, args, deps);
       return {
-        content: [{ type: 'text', text: render(response) }],
+        content: [{ type: 'text', text: render(response, args) }],
         structuredContent: sanitizeStructured(response),
       };
     } catch (error) {
@@ -79,11 +82,21 @@ function createCategoryHandler<Args, Response>(
   };
 }
 
-export const handleSearch = createCategoryHandler(
+export const handleSearch = createCategoryHandler<
+  SearchInput,
+  SearchResponse | SearchBatchResponse
+>(
   'Search failed',
-  (config, args: SearchInput, deps) =>
-    search(config, toSearchParams(args), { fetchImpl: deps.fetchImpl }),
-  formatSearchResults,
+  (config, args, deps) => {
+    const opts = { fetchImpl: deps.fetchImpl };
+    return args.queries !== undefined
+      ? searchBatch(config, args.queries, toSearchParams(args), opts)
+      : search(config, toSearchParams(args), opts);
+  },
+  (response, args) =>
+    'batch' in response
+      ? formatSearchBatchResults(response, args.detail)
+      : formatSearchResults(response, args.detail),
 );
 
 export async function handleFetch(
@@ -116,7 +129,7 @@ export const handleListEngines = createCategoryHandler(
 );
 
 /** Registration only leans on the result shape every category shares. */
-type AnyCategoryResult = { title: string };
+type AnyCategoryResult = { title: string; url: string; content?: string };
 
 function categoryErrorLabel(definition: CategoryDefinition<AnyCategoryResult>): string {
   // The web tool is just "Search failed"; the other headings read naturally.
@@ -130,7 +143,7 @@ function categoryToolHandler(definition: CategoryDefinition<AnyCategoryResult>) 
       runCategorySearch(definition, config, toCategorySearchParams(args, definition.upstream), {
         fetchImpl: deps.fetchImpl,
       }),
-    (response) => formatCategoryResults(definition, response),
+    (response, args) => formatCategoryResults(definition, response, args.detail),
   );
 }
 
@@ -157,7 +170,8 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
           title: definition.tool.title,
           description: withUntrustedSuffix(definition.tool.description),
           inputSchema: searchInput,
-          outputSchema: searchOutput,
+          // Union: the single envelope or the batch wrapper (D6, anyOf per V6).
+          outputSchema: searchToolOutput,
           annotations: TOOL_ANNOTATIONS,
           icons: TOOL_ICONS,
         },

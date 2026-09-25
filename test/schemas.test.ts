@@ -11,6 +11,7 @@ import {
   newsSearchOutput,
   searchInput,
   searchOutput,
+  searchToolOutput,
   toImageSearchParams,
   toMusicSearchParams,
   toNewsSearchParams,
@@ -48,16 +49,16 @@ describe('imageSearchInput', () => {
     expect(parsed.max_results).toBe(10);
     expect(parsed.engines).toBeUndefined();
   });
-  it('has no time_range field in its shape', () => {
-    expect('time_range' in imageSearchInput.shape).toBe(false);
+  it('accepts time_range now that the images category supports it', () => {
+    expect('time_range' in imageSearchInput.shape).toBe(true);
+    const parsed = imageSearchInput.parse({ query: 'cats', time_range: 'week' });
+    expect(parsed.time_range).toBe('week');
+    expect(parsed.max_results).toBe(10);
   });
-  it('rejects a bad query and out-of-range max_results', () => {
+  it('rejects a bad query, an invalid time_range and out-of-range max_results', () => {
     expect(imageSearchInput.safeParse({ query: '' }).success).toBe(false);
     expect(imageSearchInput.safeParse({ query: 'q', max_results: 51 }).success).toBe(false);
-  });
-  it('silently strips unknown keys (time_range is ignored, not rejected)', () => {
-    const parsed = imageSearchInput.parse({ query: 'q', time_range: 'day' });
-    expect(parsed).toEqual({ query: 'q', max_results: 10 });
+    expect(imageSearchInput.safeParse({ query: 'q', time_range: 'fortnight' }).success).toBe(false);
   });
 });
 
@@ -155,10 +156,14 @@ describe('videoSearchInput', () => {
 });
 
 describe('musicSearchInput', () => {
-  it('has no time_range field and strips it if sent', () => {
-    expect('time_range' in musicSearchInput.shape).toBe(false);
+  it('accepts time_range now that the music category supports it', () => {
+    expect('time_range' in musicSearchInput.shape).toBe(true);
     const parsed = musicSearchInput.parse({ query: 'nirvana', time_range: 'day' });
-    expect(parsed).toEqual({ query: 'nirvana', max_results: 10 });
+    expect(parsed.time_range).toBe('day');
+    expect(parsed.max_results).toBe(10);
+  });
+  it('rejects an invalid time_range value', () => {
+    expect(musicSearchInput.safeParse({ query: 'q', time_range: 'decade' }).success).toBe(false);
   });
 });
 
@@ -181,6 +186,19 @@ describe('toVideoSearchParams / toMusicSearchParams', () => {
       pageno: 2,
       maxResults: 10,
     });
+  });
+});
+
+describe('time_range parity for image and music params', () => {
+  it('maps time_range through the category param mappers', () => {
+    const image = toImageSearchParams(
+      imageSearchInput.parse({ query: 'cats', time_range: 'month' }),
+    );
+    expect(image.timeRange).toBe('month');
+    const music = toMusicSearchParams(
+      musicSearchInput.parse({ query: 'nirvana', time_range: 'week' }),
+    );
+    expect(music.timeRange).toBe('week');
   });
 });
 
@@ -240,12 +258,74 @@ describe('listEngines schemas', () => {
   });
 });
 
+describe('searchInput queries / min_score / detail', () => {
+  it('requires query unless queries is given, and forbids sending both', () => {
+    expect(searchInput.safeParse({}).success).toBe(false);
+    expect(searchInput.safeParse({ query: 'q', queries: ['a', 'b'] }).success).toBe(false);
+    expect(searchInput.safeParse({ queries: ['a', 'b'] }).success).toBe(true);
+    expect(searchInput.safeParse({ query: 'q' }).success).toBe(true);
+  });
+
+  it('bounds queries at 2-5 non-empty entries', () => {
+    expect(searchInput.safeParse({ queries: ['solo'] }).success).toBe(false);
+    expect(searchInput.safeParse({ queries: ['a', 'b', 'c', 'd', 'e', 'f'] }).success).toBe(false);
+    expect(searchInput.safeParse({ queries: ['a', ''] }).success).toBe(false);
+  });
+
+  it('routes shared args through toSearchParams, including min_score', () => {
+    const params = toSearchParams(
+      searchInput.parse({ queries: ['a', 'b'], min_score: 2, safesearch: 1, max_results: 5 }),
+    );
+    expect(params.minScore).toBe(2);
+    expect(params.safesearch).toBe(1);
+    expect(params.maxResults).toBe(5);
+  });
+
+  it('accepts min_score >= 0 and rejects negatives', () => {
+    expect(searchInput.safeParse({ query: 'q', min_score: 0 }).success).toBe(true);
+    expect(searchInput.safeParse({ query: 'q', min_score: 1.5 }).success).toBe(true);
+    expect(searchInput.safeParse({ query: 'q', min_score: -1 }).success).toBe(false);
+  });
+
+  it('accepts detail full/compact and rejects other values', () => {
+    expect(searchInput.safeParse({ query: 'q', detail: 'compact' }).success).toBe(true);
+    expect(searchInput.safeParse({ query: 'q', detail: 'full' }).success).toBe(true);
+    expect(searchInput.safeParse({ query: 'q', detail: 'verbose' }).success).toBe(false);
+  });
+});
+
+describe('searchOutput union (searchToolOutput)', () => {
+  const single = {
+    query: 'q',
+    results: [{ title: 'T', url: 'https://r.test/x', content: 'c' }],
+    answers: [],
+    corrections: [],
+    infoboxes: [],
+    suggestions: [],
+    unresponsiveEngines: [],
+  };
+
+  it('validates both the single envelope and the batch wrapper', () => {
+    expect(searchToolOutput.safeParse(single).success).toBe(true);
+    expect(searchToolOutput.safeParse({ batch: [single, single] }).success).toBe(true);
+    expect(searchToolOutput.safeParse({ batch: [single] }).success).toBe(false);
+    expect(searchToolOutput.safeParse({ nope: true }).success).toBe(false);
+  });
+
+  it('compiles to a draft-07-safe anyOf (no items:false)', () => {
+    const json = z.toJSONSchema(searchToolOutput) as JsonSchemaNode;
+    expect(json.anyOf).toBeDefined();
+    expect(JSON.stringify(json)).not.toContain('"items":false');
+  });
+});
+
 interface JsonSchemaNode {
   type?: string;
   items?: JsonSchemaNode | boolean;
   minItems?: number;
   maxItems?: number;
   properties?: Record<string, JsonSchemaNode>;
+  anyOf?: unknown;
 }
 
 describe('output schemas are validatable by draft-07-only clients', () => {
