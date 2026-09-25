@@ -2,6 +2,7 @@ import * as z from 'zod/v4';
 import {
   asStringArray,
   isRecord,
+  pickCount,
   sanitizeMeta,
   truncateText,
   MAX_ARRAY_ITEMS,
@@ -18,6 +19,8 @@ const resultSchema = z.object({
   url: z.string(),
   thumbnailSrc: z.string().optional(),
   length: z.string().optional(),
+  views: z.number().optional(),
+  iframeSrc: z.string().optional(),
   author: z.string().optional(),
   publishedDate: z.string().optional(),
   engines: z.array(z.string()).optional(),
@@ -58,6 +61,10 @@ function projectResult(value: unknown): Result | undefined {
     result.thumbnailSrc = truncateText(raw.thumbnail, MAX_URL_CHARS);
   const length = normalizeDuration(raw.length);
   if (length !== undefined) result.length = length;
+  const views = pickCount(raw.views);
+  if (views !== undefined) result.views = views;
+  if (typeof raw.iframe_src === 'string' && raw.iframe_src.trim() !== '')
+    result.iframeSrc = truncateText(raw.iframe_src, MAX_URL_CHARS);
   if (typeof raw.author === 'string') result.author = truncateText(raw.author, MAX_AUTHOR_CHARS);
   const publishedDate = pickPublishedDate(raw.publishedDate);
   if (publishedDate !== undefined) result.publishedDate = publishedDate;
@@ -85,6 +92,8 @@ export const videoCategory = defineCategory({
     if (result.length) meta.push(sanitizeMeta(result.length));
     if (result.author) meta.push(sanitizeMeta(result.author));
     if (result.publishedDate) meta.push(`published: ${sanitizeMeta(result.publishedDate)}`);
+    if (result.views !== undefined) meta.push(`views: ${result.views}`);
+    if (result.iframeSrc) meta.push(`embed: ${sanitizeMeta(result.iframeSrc)}`);
     if (meta.length > 0) lines.push(`_${meta.join(' · ')}_`);
     return lines;
   },

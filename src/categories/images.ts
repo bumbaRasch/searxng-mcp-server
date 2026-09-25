@@ -2,6 +2,7 @@ import * as z from 'zod/v4';
 import {
   asStringArray,
   isRecord,
+  pickCount,
   sanitizeMeta,
   truncateText,
   MAX_ARRAY_ITEMS,
@@ -31,6 +32,8 @@ const resultSchema = z.object({
   thumbnailSrc: z.string().optional(),
   resolution: z.string().optional(),
   imgFormat: z.string().optional(),
+  filesize: z.number().optional(),
+  formats: z.array(z.string()).optional(),
   source: z.string().optional(),
   engines: z.array(z.string()).optional(),
 });
@@ -52,6 +55,13 @@ function projectResult(value: unknown): Result | undefined {
     result.resolution = truncateText(value.resolution, MAX_MEDIA_FIELD_CHARS);
   if (typeof value.img_format === 'string')
     result.imgFormat = truncateText(value.img_format, MAX_MEDIA_FIELD_CHARS);
+  const filesize = pickCount(value.filesize);
+  if (filesize !== undefined) result.filesize = filesize;
+  const formats = Array.isArray(value.formats) ? asStringArray(value.formats) : [];
+  if (formats.length > 0)
+    result.formats = formats
+      .map((item) => truncateText(item, MAX_MEDIA_FIELD_CHARS))
+      .slice(0, MAX_ARRAY_ITEMS);
   if (typeof value.source === 'string')
     result.source = truncateText(value.source, MAX_SOURCE_CHARS);
   if (Array.isArray(value.engines))
@@ -64,9 +74,9 @@ export const imageCategory = defineCategory({
     name: 'image_search',
     title: 'Image search (SearXNG)',
     description:
-      'Search the web for images. Returns direct image links, thumbnails, resolution and format.',
+      'Search the web for images. Returns direct image links, thumbnails, resolution, file size and formats. Supports a time_range freshness filter.',
   },
-  upstream: { categories: ['images'], supportsTimeRange: false },
+  upstream: { categories: ['images'], supportsTimeRange: true },
   heading: 'Image',
   resultSchema,
   projectResult,
@@ -78,6 +88,9 @@ export const imageCategory = defineCategory({
     const meta: string[] = [];
     if (result.resolution) meta.push(sanitizeMeta(result.resolution));
     if (result.imgFormat) meta.push(sanitizeMeta(result.imgFormat));
+    if (result.filesize !== undefined) meta.push(`filesize: ${result.filesize}`);
+    if (result.formats && result.formats.length > 0)
+      meta.push(`formats: ${sanitizeMeta(result.formats.join(', '))}`);
     if (result.source) meta.push(`source: ${sanitizeMeta(result.source)}`);
     if (meta.length > 0) lines.push(`_${meta.join(' · ')}_`);
     return lines;

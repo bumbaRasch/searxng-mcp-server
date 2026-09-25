@@ -2,13 +2,17 @@ import * as z from 'zod/v4';
 import {
   categoryEnvelopeSchema,
   categoryInputSchema,
+  detailArg,
   enginesArg,
   languageArg,
   maxResultsArg,
+  minScoreArg,
   pagenoArg,
+  queriesArg,
   queryArg,
   safesearchArg,
   timeRangeArg,
+  type DetailLevel,
 } from './categories/shared.js';
 import { generalCategory } from './categories/general.js';
 import { imageCategory } from './categories/images.js';
@@ -19,10 +23,13 @@ import { videoCategory } from './categories/videos.js';
 export {
   commonCategoryArgs,
   DEFAULT_MAX_RESULTS,
+  detailArg,
   enginesArg,
   languageArg,
   maxResultsArg,
+  minScoreArg,
   pagenoArg,
+  queriesArg,
   queryArg,
   responseTail,
   safesearchArg,
@@ -32,19 +39,41 @@ export {
 /** Projection bound for infobox urls; also caps how many are rendered. */
 export const MAX_URLS_PER_INFOBOX = 10;
 
-export const searchInput = z.object({
-  query: queryArg,
-  categories: z
-    .array(z.string().min(1))
-    .optional()
-    .describe('SearXNG categories, e.g. ["general"], ["news"]. Unknown values are ignored.'),
-  engines: enginesArg,
-  language: languageArg,
-  time_range: timeRangeArg,
-  pageno: pagenoArg,
-  safesearch: safesearchArg,
-  max_results: maxResultsArg,
-});
+export const searchInput = z
+  .object({
+    query: queryArg
+      .optional()
+      .describe('The search query. Required unless "queries" (batch) is given.'),
+    queries: queriesArg,
+    categories: z
+      .array(z.string().min(1))
+      .optional()
+      .describe('SearXNG categories, e.g. ["general"], ["news"]. Unknown values are ignored.'),
+    engines: enginesArg,
+    language: languageArg,
+    time_range: timeRangeArg,
+    pageno: pagenoArg,
+    safesearch: safesearchArg,
+    max_results: maxResultsArg,
+    min_score: minScoreArg,
+    detail: detailArg,
+  })
+  .superRefine((input, ctx) => {
+    if (input.queries === undefined && input.query === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['query'],
+        message: 'Required unless queries (batch) is provided.',
+      });
+    }
+    if (input.queries !== undefined && input.query !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['queries'],
+        message: 'Provide either query or queries, not both.',
+      });
+    }
+  });
 export type SearchInput = z.infer<typeof searchInput>;
 
 // Web search = category envelope plus its bespoke answers/corrections/infoboxes extras (D1).
@@ -68,6 +97,15 @@ export type SearchResponse = z.infer<typeof searchOutput>;
 export type SearchResult = z.infer<(typeof searchOutput.shape)['results']['element']>;
 export type SearchAnswer = z.infer<(typeof searchOutput.shape)['answers']['element']>;
 export type SearchInfobox = z.infer<(typeof searchOutput.shape)['infoboxes']['element']>;
+
+/** Batch branch of the web-search output: one full response per input query (D6). */
+export const searchBatchOutput = z.object({
+  batch: z.array(searchOutput).min(2).max(5),
+});
+export type SearchBatchResponse = z.infer<typeof searchBatchOutput>;
+
+// The tool's wire schema is the union of both shapes: anyOf, draft-07-safe (V6).
+export const searchToolOutput = z.union([searchOutput, searchBatchOutput]);
 
 // Media-category schemas are generated from the registry: input from the shared
 // atoms, output from the envelope builder over the category's result schema (D1).
@@ -155,6 +193,7 @@ export interface SearchParams {
   pageno?: number | undefined;
   safesearch?: Safesearch | undefined;
   maxResults: number;
+  minScore?: number | undefined;
 }
 
 /** Tool arguments shared by every category tool, time_range included when supported. */
@@ -166,6 +205,7 @@ export interface CategoryToolInput {
   safesearch?: Safesearch | undefined;
   max_results: number;
   time_range?: TimeRange | undefined;
+  detail?: DetailLevel | undefined;
 }
 
 function mapCommonParams(input: CategoryToolInput): SearchParams {
@@ -182,9 +222,16 @@ function mapCommonParams(input: CategoryToolInput): SearchParams {
 /** Single mapping site from MCP tool arguments to internal search params. */
 export function toSearchParams(input: SearchInput): SearchParams {
   return {
-    ...mapCommonParams(input),
+    // The superRefine guard guarantees query whenever queries (batch) is absent.
+    query: input.query ?? '',
     categories: input.categories,
+    engines: input.engines,
+    language: input.language,
     timeRange: input.time_range,
+    pageno: input.pageno,
+    safesearch: input.safesearch,
+    maxResults: input.max_results,
+    minScore: input.min_score,
   };
 }
 

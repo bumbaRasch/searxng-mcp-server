@@ -6,6 +6,7 @@ import {
   truncateText,
   MAX_ARRAY_ITEMS,
   MAX_RESULT_CONTENT_CHARS,
+  MAX_URL_CHARS,
 } from './shared.js';
 import { defineCategory } from './types.js';
 
@@ -19,6 +20,8 @@ export interface RawResult {
   category?: unknown;
   score?: unknown;
   publishedDate?: unknown;
+  metadata?: unknown;
+  thumbnail?: unknown;
 }
 
 /** SearXNG leaks the string 'None' (and blank strings) for missing dates. */
@@ -37,6 +40,8 @@ const resultSchema = z.object({
   category: z.string().optional(),
   score: z.number().optional(),
   publishedDate: z.string().optional(),
+  metadata: z.string().optional(),
+  thumbnailSrc: z.string().optional(),
 });
 type Result = z.infer<typeof resultSchema>;
 
@@ -59,6 +64,10 @@ function projectResult(value: unknown): Result | undefined {
   if (typeof raw.score === 'number') result.score = raw.score;
   const publishedDate = pickPublishedDate(raw.publishedDate);
   if (publishedDate !== undefined) result.publishedDate = publishedDate;
+  if (typeof raw.metadata === 'string' && raw.metadata.trim() !== '')
+    result.metadata = truncateText(raw.metadata, MAX_RESULT_CONTENT_CHARS);
+  if (typeof raw.thumbnail === 'string' && raw.thumbnail.trim() !== '')
+    result.thumbnailSrc = truncateText(raw.thumbnail, MAX_URL_CHARS);
   return result;
 }
 
@@ -67,7 +76,7 @@ export const generalCategory = defineCategory({
     name: 'search',
     title: 'Web search (SearXNG)',
     description:
-      'Search the web through the configured SearXNG instance. Returns ranked results with titles, URLs and snippets. For images, news, videos or music, prefer the dedicated *_search tools — they return richer typed fields.',
+      'Search the web through the configured SearXNG instance. Returns ranked results with titles, URLs and snippets. Supports batch queries (2-5 via "queries"), a min_score relevance floor and detail: "compact". For images, news, videos or music, prefer the dedicated *_search tools — they return richer typed fields.',
   },
   // Upstream categories are user-chosen via the tool's categories argument.
   upstream: { categories: [], supportsTimeRange: true },
@@ -81,6 +90,8 @@ export const generalCategory = defineCategory({
     const meta: string[] = [];
     if (result.engine) meta.push(`engine: ${sanitizeMeta(result.engine)}`);
     if (result.publishedDate) meta.push(`published: ${sanitizeMeta(result.publishedDate)}`);
+    if (result.metadata) meta.push(`metadata: ${sanitizeMeta(result.metadata)}`);
+    if (result.thumbnailSrc) meta.push(`thumbnail: ${sanitizeMeta(result.thumbnailSrc)}`);
     if (meta.length > 0) lines.push('', `_${meta.join(' · ')}_`);
     return lines;
   },
