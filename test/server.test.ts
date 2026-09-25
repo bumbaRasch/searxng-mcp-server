@@ -204,6 +204,7 @@ describe('every tool answers over transport', () => {
     news_search: { query: 'q' },
     video_search: { query: 'q' },
     music_search: { query: 'q' },
+    paper_search: { query: 'q' },
     list_engines: {},
   };
 
