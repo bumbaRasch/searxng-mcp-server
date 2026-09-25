@@ -16,9 +16,9 @@ and registration from it.
      `resultSchema`).
    - `projectResult`: defensive `raw → Result | undefined` projection —
      return `undefined` to drop a garbage item without consuming the
-     `max_results` budget; reuse the shared bounds and helpers from
-     `categories/shared.ts` (`truncateText`, `asStringArray`,
-     `pickPublishedDate`, ...).
+     `max_results` budget; reuse the shared bounds and helpers
+     (`truncateText`, `asStringArray`, `pickCount`, ... from
+     `categories/shared.ts`; `pickPublishedDate` from `categories/general.ts`).
    - `renderResultLines`: the per-result markdown lines. They land inside the
      untrusted wrapper; run every web-derived string through `sanitizeMeta`.
 2. **`src/categories/index.ts`** — export the file and add the definition to

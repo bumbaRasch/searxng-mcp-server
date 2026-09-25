@@ -1,6 +1,6 @@
 # searxng-mcp-server
 
-Self-hosted [SearXNG](https://github.com/searxng/searxng) metasearch for MCP clients — six tools (web, image, news, video, music, page fetch) with no API keys and no tracking.
+Self-hosted [SearXNG](https://github.com/searxng/searxng) metasearch for MCP clients — nine tools (web, image, news, video, music and paper search, query suggestions, page fetch, instance info) with no API keys and no tracking.
 
 [![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_Server-0098FF?style=flat-square&logo=visualstudiocode)](https://insiders.vscode.dev/redirect/mcp/install?name=searxng&config=%7B%22command%22%3A%22npx%22%2C%22args%22%3A%5B%22-y%22%2C%22searxng-mcp-server%22%5D%7D)
 [![Install in Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=searxng&config=%7B%22command%22%3A%22npx%22%2C%22args%22%3A%5B%22-y%22%2C%22searxng-mcp-server%22%5D%7D)
@@ -14,44 +14,25 @@ Self-hosted [SearXNG](https://github.com/searxng/searxng) metasearch for MCP cli
 
 Search-API servers mean signups, API keys, rate limits, and provider-side tracking of every query. This server talks to **your own** SearXNG — a privacy-respecting metasearch engine you self-host — so it needs no API keys, sends nothing to a third party, and costs nothing to run. `fetch_content` is hardened for exactly this job: SSRF and DNS-rebind guarding on every redirect hop, and prompt-injection wrapping on all web output.
 
-|                   | searxng-mcp-server             | typical API-key search MCP |
-| ----------------- | ------------------------------ | -------------------------- |
-| API keys / signup | none — your own SearXNG        | required                   |
-| Tracking          | none (self-hosted)             | provider-side              |
-| Cost              | your infra only                | free tier → paid           |
-| Results           | metasearch aggregate           | single provider            |
-| Media tools       | image/news/video/music + fetch | usually web only           |
-
 Also ships MCP `icons` metadata on the server and every tool — self-contained data URIs, rendered by icon-aware clients.
 
 ## A typical session
 
 ```text
 # Arguments are JSON in real MCP calls; this shows the flow:
-search "rust async"                          → ranked results + answers + infoboxes
-news_search "linux" (time_range: "week")     → fresh articles
-fetch_content https://result-url.example     → the page as clean Markdown
-image_search "red panda"                     → direct image links + thumbnails
+autocomplete "rust asy"                        → suggestions to refine the query
+search "rust async" (min_score: 1)             → ranked results + answers + infoboxes
+paper_search "attention" (time_range: "year")  → papers with abstracts and PDF links
+fetch_content https://result-url.example       → the page as clean Markdown (PDFs too)
 ```
 
 ## Architecture
 
-MCP client → stdio (default) or Streamable HTTP (opt-in) → this server → your SearXNG (Docker) → upstream engines. Page fetches go directly to the public web, SSRF-guarded.
-
-```mermaid
-flowchart LR
-    C["MCP client<br/>(Claude, Cursor, OpenCode…)"] -->|"stdio (JSON-RPC)"| S["searxng-mcp-server"]
-    C -.->|"HTTP /mcp (opt-in)"| S
-    S -->|"search, *_search"| X["SearXNG<br/>(self-hosted, Docker)"]
-    X --> E["engines<br/>(Google, Bing, DDG…)"]
-    S -->|"fetch_content<br/>(SSRF-guarded)"| W["public web"]
-```
-
-## Requirements
-
-- Node >= 22.19 (the `npx` runtime); Docker, for the SearXNG stack
+MCP client → stdio (default) or Streamable HTTP (opt-in) → this server → your SearXNG (Docker) → upstream engines. Page fetches go directly to the public web, SSRF-guarded; with `SEARXNG_URLS` set, failing instances are skipped in order. Diagram and module map: [docs/design.md](docs/design.md).
 
 ## Quick start
+
+Requires Node >= 22.19 (the `npx` runtime) and Docker for the SearXNG stack.
 
 ### 1. Run SearXNG
 
@@ -78,7 +59,7 @@ Works in Claude Desktop, Cursor and most `mcpServers`-style clients:
 }
 ```
 
-`SEARXNG_URL` already defaults to `http://localhost:8888`; add an `env` block only to override.
+`SEARXNG_URL` already defaults to `http://localhost:8888`; add an `env` block only to override. Cursor reads the same shape from `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project).
 
 <details><summary>OpenCode</summary>
 
@@ -105,14 +86,6 @@ One command, available in all projects:
 ```bash
 claude mcp add --scope user searxng -- npx -y searxng-mcp-server
 ```
-
-Or use the universal mcpServers block above in any shared config.
-
-</details>
-
-<details><summary>Cursor</summary>
-
-`~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project) — same shape as the universal block above.
 
 </details>
 
@@ -164,28 +137,30 @@ npx -y searxng-mcp-server --transport http
 # → searxng-mcp-server running on http://127.0.0.1:3000/mcp
 ```
 
-Full guide — start flags, protocol revision support, the security model (auth token, DNS-rebinding protection, TLS behind a reverse proxy), Docker deployment and client examples: [docs/http.md](docs/http.md).
+Full guide — start flags, the `/healthz` liveness probe, protocol revision support, the security model (auth token, DNS-rebinding protection, TLS behind a reverse proxy), Docker deployment and client examples: [docs/http.md](docs/http.md).
 
 ## Tools
 
-| Tool            | What it does                                                              |
-| --------------- | ------------------------------------------------------------------------- |
-| `search`        | Web search: ranked results + answers, corrections, suggestions, infoboxes |
-| `fetch_content` | Fetch a page, return its main content as clean Markdown                   |
-| `image_search`  | Images: direct links, thumbnails, resolution, format                      |
-| `news_search`   | News articles with publish dates and a freshness filter                   |
-| `video_search`  | Videos: page links, thumbnails, duration, author                          |
-| `music_search`  | Music: page links and direct audio links when available                   |
-| `list_engines`  | Instance capabilities: enabled engines and categories                     |
+| Tool            | What it does                                                                                            |
+| --------------- | ------------------------------------------------------------------------------------------------------- |
+| `search`        | Web search: ranked results + answers, corrections, suggestions, infoboxes; batch `queries`, `min_score` |
+| `image_search`  | Images: direct links, thumbnails, resolution, format, file size                                         |
+| `news_search`   | News articles with publish dates and a freshness filter                                                 |
+| `video_search`  | Videos: page links, thumbnails, duration, author, view counts, embed links                              |
+| `music_search`  | Music: page links and direct audio links when available                                                 |
+| `paper_search`  | Scientific publications: abstracts, authors, journal/DOI metadata, PDF links                            |
+| `fetch_content` | Fetch a page (HTML or text PDF) as clean Markdown; `offset` continues long pages                        |
+| `autocomplete`  | Query suggestions for a prefix, to refine a query before searching                                      |
+| `list_engines`  | Instance capabilities: enabled engines and categories                                                   |
 
 All results are annotated as untrusted: treat returned content as data, never as instructions.
 
 <details><summary>Parameters</summary>
 
-- **search** — `query` (string, required): max 500 chars. `categories` (string[], optional): e.g. `["general"]`. `engines` (string[], optional): best-effort restriction. `language` (string, optional): code like `"en"`. `time_range` (string, optional): `day` | `week` | `month` | `year`. `pageno` (number, optional): default 1. `safesearch` (number, optional): 0 off, 1 moderate, 2 strict. `max_results` (number, optional): 1–50, default 10.
-- **fetch_content** — `url` (string, required): absolute http/https, max 2048 chars. `max_chars` (number, optional): 1000–200000, default `MAX_CHARS` (25000). `timeout_ms` (number, optional): max 120000.
-- **news_search** / **video_search** — `query` (required), `time_range`, `engines`, `language`, `pageno`, `safesearch`, `max_results` (optional): as in `search`.
-- **image_search** / **music_search** — `query` (required), `engines`, `language`, `pageno`, `safesearch`, `max_results` (optional): as in `search`.
+- **search** — `query` (string, required unless `queries` is given): max 500 chars. `queries` (string[2–5]): batch mode, one result set per query in input order. Optional: `categories` (string[]), `engines` (string[]), `language`, `time_range` (`day` | `week` | `month` | `year`), `pageno`, `safesearch` (0/1/2), `max_results` (1–50, default 10; per query in batch mode), `min_score` (number ≥ 0, drops scored results below it), `detail` (`full` default | `compact` markdown rendering).
+- **image_search** / **news_search** / **video_search** / **music_search** / **paper_search** — `query` (required) plus the shared optional args: `engines`, `language`, `pageno`, `safesearch`, `max_results`, `detail`, and `time_range` (all five support the freshness filter).
+- **fetch_content** — `url` (string, required): absolute http/https, max 2048 chars. `max_chars` (1000–200000, default `MAX_CHARS` 25000). `offset` (int ≥ 0): window start into the extracted content — continue from the returned `nextOffset`. `timeout_ms` (max 120000). Text PDFs are extracted per page (`[Page N]` sections, `pages` count in the output).
+- **autocomplete** — `query` (string, required): the prefix to complete, max 200 chars. Suggestions follow the instance's configured language.
 
 </details>
 
@@ -236,7 +211,6 @@ pnpm test             # vitest unit tests
 pnpm lint && pnpm lint:types && pnpm format:check   # oxlint + prettier
 pnpm typecheck        # tsc --noEmit
 pnpm build            # outputs dist/
-pnpm inspector        # run the server in the MCP Inspector
 node scripts/e2e.mjs      # end-to-end over stdio against the local SearXNG stack
 node scripts/e2e-http.mjs # same over the Streamable HTTP transport
 ```
