@@ -57,6 +57,16 @@ async function main() {
   const url = `http://127.0.0.1:${port}/mcp`;
   assert(log.includes(`running on ${url}`), `server startup log names ${url}`);
 
+  // /healthz is passive: no session, no bearer, just Host/Origin validation.
+  const healthz = await fetch(`http://127.0.0.1:${port}/healthz`);
+  assert(healthz.status === 200, `/healthz answers 200 (got ${healthz.status})`);
+  assert(
+    (healthz.headers.get('content-type') ?? '').includes('application/json'),
+    '/healthz serves JSON',
+  );
+  const healthzBody = await healthz.json();
+  assert(healthzBody?.status === 'ok', `/healthz reports ok (got ${JSON.stringify(healthzBody)})`);
+
   const client = new Client(
     { name: 'searxng-mcp-server-e2e', version: '0.0.1' },
     { versionNegotiation: { mode: 'auto' } },
@@ -94,6 +104,25 @@ async function main() {
       arguments: { url: 'http://localhost:8888' },
     });
     assert(ssrf.isError === true, 'SSRF guard rejects a private address over HTTP too');
+
+    // v0.4.0 surface over Streamable HTTP: wire schemas validated by the SDK.
+    const suggestions = await client.callTool({
+      name: 'autocomplete',
+      arguments: { query: 'sear' },
+    });
+    assert(
+      !suggestions.isError && Array.isArray(suggestions.structuredContent?.suggestions),
+      'autocomplete returns a suggestions array over HTTP',
+    );
+
+    const papers = await client.callTool({
+      name: 'paper_search',
+      arguments: { query: 'quantum computing', max_results: 5 },
+    });
+    assert(
+      !papers.isError && (papers.structuredContent?.results?.length ?? 0) > 0,
+      `paper_search returns results over HTTP (got ${papers.structuredContent?.results?.length ?? 0})`,
+    );
 
     // Modern-only endpoint: a 2025-era initialize must get a typed rejection.
     const legacy = await fetch(url, {

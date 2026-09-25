@@ -133,6 +133,66 @@ async function main() {
       'fetch_content example.com returns Markdown content',
     );
 
+    // 4a-pdf. public PDF read (D4) + offset continuation round-trip (D5);
+    // soft-skip the whole block when the public network is unreachable.
+    const PDF_URL = 'https://www.irs.gov/pub/irs-pdf/fw4.pdf';
+    const pdfCall = await request(serverProcess, 'tools/call', {
+      name: 'fetch_content',
+      arguments: { url: PDF_URL, max_chars: 200_000 },
+    });
+    const pdfErrorText = pdfCall.result?.content?.[0]?.text ?? '';
+    if (
+      pdfCall.result?.isError === true &&
+      /timed out|fetch failed|ENOTFOUND|ECONNREFUSED|EAI_AGAIN|ECONNRESET|network|HTTP 5\d\d/i.test(
+        pdfErrorText,
+      )
+    ) {
+      console.log('SKIPPED (network): public PDF fetch is unreachable');
+    } else {
+      assert(!pdfCall.error && !pdfCall.result?.isError, 'fetch_content of a public PDF succeeds');
+      const pdf = pdfCall.result?.structuredContent;
+      assert(
+        typeof pdf?.pages === 'number' && pdf.pages >= 1,
+        `PDF result reports pages (got ${pdf?.pages})`,
+      );
+      assert(
+        typeof pdf?.content === 'string' && pdf.content.includes('[Page 1]'),
+        'PDF content carries a [Page 1] section',
+      );
+
+      const OFFSET_WINDOW = 1000; // schema floor for max_chars
+      const TRUNCATION_MARKER = '\n\n[Content truncated]';
+      const fullContent = pdf.content;
+      if (fullContent.length > OFFSET_WINDOW + TRUNCATION_MARKER.length) {
+        const firstWindow = await request(serverProcess, 'tools/call', {
+          name: 'fetch_content',
+          arguments: { url: PDF_URL, max_chars: OFFSET_WINDOW },
+        });
+        const w1 = firstWindow.result?.structuredContent;
+        assert(
+          w1?.truncated === true && w1?.nextOffset === OFFSET_WINDOW,
+          `windowed PDF is truncated with nextOffset=${OFFSET_WINDOW} (got truncated=${w1?.truncated}, nextOffset=${w1?.nextOffset})`,
+        );
+        assert(
+          w1?.content ===
+            fullContent.slice(0, OFFSET_WINDOW - TRUNCATION_MARKER.length) + TRUNCATION_MARKER,
+          'first window is the capped prefix plus the truncation marker',
+        );
+        const secondWindow = await request(serverProcess, 'tools/call', {
+          name: 'fetch_content',
+          arguments: { url: PDF_URL, max_chars: OFFSET_WINDOW, offset: w1.nextOffset },
+        });
+        const w2 = secondWindow.result?.structuredContent;
+        assert(
+          typeof w2?.content === 'string' &&
+            w2.content.startsWith(fullContent.slice(OFFSET_WINDOW, OFFSET_WINDOW + 15)),
+          'offset fetch resumes exactly where the first window stopped',
+        );
+      } else {
+        console.log('SKIPPED (PDF text too short for offset round-trip)');
+      }
+    }
+
     // 4a. image_search against the live SearXNG instance
     const imageCall = await request(serverProcess, 'tools/call', {
       name: 'image_search',
@@ -197,6 +257,81 @@ async function main() {
       (enginesCall.result?.structuredContent?.counts?.engines ?? 0) > 0,
       `list_engines reports enabled engines (got ${enginesCall.result?.structuredContent?.counts?.engines ?? 0})`,
     );
+
+    // 4f. paper_search against the scientific publications category
+    const paperCall = await request(serverProcess, 'tools/call', {
+      name: 'paper_search',
+      arguments: { query: 'quantum computing', max_results: 5 },
+    });
+    assert(!paperCall.error && !paperCall.result?.isError, 'paper_search call succeeds');
+    const paperStructured = paperCall.result?.structuredContent;
+    assert(
+      Array.isArray(paperStructured?.results) && paperStructured.results.length > 0,
+      `paper_search returns results (got ${paperStructured?.results?.length ?? 0})`,
+    );
+    assert(
+      typeof paperStructured.results[0].url === 'string' &&
+        paperStructured.results[0].url.length > 0,
+      'paper_search results carry url',
+    );
+    console.log(`   first paper: ${paperStructured.results[0].title}`);
+
+    // 4g. autocomplete for a common prefix (empty suggestions are valid)
+    const autocompleteCall = await request(serverProcess, 'tools/call', {
+      name: 'autocomplete',
+      arguments: { query: 'sear' },
+    });
+    assert(
+      !autocompleteCall.error && !autocompleteCall.result?.isError,
+      'autocomplete call succeeds',
+    );
+    const autocomplete = autocompleteCall.result?.structuredContent;
+    assert(autocomplete?.query === 'sear', 'autocomplete echoes the prefix');
+    assert(
+      Array.isArray(autocomplete?.suggestions),
+      `autocomplete returns a suggestions array (got ${autocomplete?.suggestions?.length ?? 'none'})`,
+    );
+
+    // 4h. search ergonomics: min_score filter + compact detail
+    const compactCall = await request(serverProcess, 'tools/call', {
+      name: 'search',
+      arguments: { query: 'searxng', min_score: 0, detail: 'compact' },
+    });
+    assert(
+      !compactCall.error && !compactCall.result?.isError,
+      'search with min_score + compact detail succeeds',
+    );
+    const compactStructured = compactCall.result?.structuredContent;
+    assert(
+      Array.isArray(compactStructured?.results) && compactStructured.results.length > 0,
+      `compact search returns results (got ${compactStructured?.results?.length ?? 0})`,
+    );
+    const compactText = compactCall.result?.content?.[0]?.text ?? '';
+    assert(
+      compactText.includes(new URL(compactStructured.results[0].url).hostname),
+      'compact render keeps the result URL',
+    );
+    const fullSearchText = searchCall.result?.content?.[0]?.text ?? '';
+    if (/_engine:/.test(fullSearchText)) {
+      assert(!/_engine:/.test(compactText), 'compact render drops per-result engine meta lines');
+    }
+
+    // 4i. batch search: one envelope per query, input order preserved
+    const batchCall = await request(serverProcess, 'tools/call', {
+      name: 'search',
+      arguments: { queries: ['searxng', 'metasearch engine'], max_results: 3 },
+    });
+    assert(!batchCall.error && !batchCall.result?.isError, 'batch search (queries[]) succeeds');
+    const batch = batchCall.result?.structuredContent?.batch;
+    assert(
+      Array.isArray(batch) && batch.length === 2,
+      `batch carries one entry per query (got ${Array.isArray(batch) ? batch.length : 'none'})`,
+    );
+    assert(
+      batch[0]?.query === 'searxng' && batch[1]?.query === 'metasearch engine',
+      'batch preserves input query order',
+    );
+    assert(Array.isArray(batch[0]?.results), 'batch entries carry a results array');
 
     // 5. SSRF guard: private address must be rejected
     const ssrfCall = await request(serverProcess, 'tools/call', {
