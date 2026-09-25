@@ -162,7 +162,10 @@ export const TOOL_NAMES = [
 ] as const;
 
 export function registerTools(server: McpServer, config: Config, deps: ToolDeps = {}): void {
-  for (const definition of categoryDefinitions) {
+  for (const entry of categoryDefinitions) {
+    // Widened once: inference from the registry union is fragile, and both the
+    // handler and the envelope schema only consume the shared result shape.
+    const definition: CategoryDefinition<AnyCategoryResult> = entry;
     if (definition.tool.name === 'search') {
       // Web search keeps its bespoke slice: user-chosen categories plus the
       // answers/corrections/infoboxes envelope (D1).
