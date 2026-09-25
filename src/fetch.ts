@@ -5,11 +5,13 @@ import type { Config } from './config.js';
 import { extractArticle, stripToText } from './extract.js';
 import { isRedirect, readCapped, type FetchLike } from './http.js';
 import { toMarkdown, truncateWithMarker } from './markdown.js';
+import { extractPdfContent, readPdfResponse, type PdfExtraction } from './pdf.js';
 import type { FetchResult } from './schemas.js';
 import { assertUrlAllowed, createGuardedDispatcher, type LookupAll } from './ssrf.js';
 
 interface FetchOptions {
   maxChars?: number | undefined;
+  offset?: number | undefined;
   timeoutMs?: number | undefined;
   fetchImpl?: FetchLike | undefined;
   lookup?: LookupAll | undefined;
@@ -19,7 +21,9 @@ export const MAX_REDIRECTS = 5;
 const MAX_CONTENT_TYPE_CHARS = 100;
 // Exact tokens with a parameter boundary: prefix siblings like xml-dtd or
 // jsonp are NOT textual; any application/*+xml (rss, atom, xhtml, svg…) is.
-const ALLOWED_CONTENT_TYPE = /^(text\/[\w.+-]*|application\/(json|xml|[\w.+-]+\+xml))\s*(;|$)/i;
+// application/pdf passes the gate but takes the PDF branch instead of Readability (D4).
+const ALLOWED_CONTENT_TYPE = /^(text\/[\w.+-]*|application\/(json|xml|pdf|[\w.+-]+\+xml))\s*(;|$)/i;
+const PDF_CONTENT_TYPE = /^application\/pdf\s*(;|$)/i;
 
 export class FetchError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
@@ -38,6 +42,7 @@ export async function fetchContent(
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   const fetchImpl: FetchLike = opts.fetchImpl ?? (undiciFetch as FetchLike);
   const maxChars = opts.maxChars ?? config.maxChars;
+  const offset = opts.offset ?? 0;
   const timeoutMs = opts.timeoutMs ?? config.fetchTimeoutMs;
   const lookupOpts = opts.lookup ? { lookup: opts.lookup } : {};
   // Pre-validation and the dispatcher share the same guarded lookup, so both
@@ -66,7 +71,10 @@ export async function fetchContent(
       const response = await fetchImpl(url.toString(), {
         redirect: 'manual',
         signal: controller.signal,
-        headers: { 'User-Agent': config.userAgent, Accept: 'text/html,application/xhtml+xml' },
+        headers: {
+          'User-Agent': config.userAgent,
+          Accept: 'text/html,application/xhtml+xml,application/pdf',
+        },
         dispatcher,
       });
 
@@ -91,21 +99,41 @@ export async function fetchContent(
         );
       }
 
-      const html = await readCapped(response, config.maxResponseBytes);
-      const article = extractArticle(html, url.toString());
-      const markdown = article.contentHtml
-        ? toMarkdown(article.contentHtml)
-        : stripToText(article.textContent ?? html);
-      const { content, truncated } = truncateWithMarker(markdown, maxChars);
+      let extracted: string;
+      let pages: number | undefined;
+      let title: string | undefined;
+      let byline: string | undefined;
+      if (PDF_CONTENT_TYPE.test(contentType)) {
+        const data = await readPdfResponse(response, config.maxResponseBytes);
+        let extraction: PdfExtraction;
+        try {
+          extraction = await extractPdfContent(data);
+        } catch (error) {
+          // unpdf/pdf.js failures carry internals; surface a sanitized FetchError.
+          throw new FetchError(`Failed to parse PDF from ${url.toString()}.`, { cause: error });
+        }
+        extracted = extraction.content;
+        pages = extraction.pages;
+        title = extraction.title;
+      } else {
+        const html = await readCapped(response, config.maxResponseBytes);
+        const article = extractArticle(html, url.toString());
+        extracted = article.contentHtml
+          ? toMarkdown(article.contentHtml)
+          : stripToText(article.textContent ?? html);
+        title = article.title;
+        byline = article.byline;
+      }
 
-      const result: FetchResult = {
-        url: rawUrl,
-        finalUrl: url.toString(),
-        content,
-        truncated,
-      };
-      if (article.title) result.title = article.title;
-      if (article.byline) result.byline = article.byline;
+      // Continuation window (D5): slice at the offset first, then the existing cap.
+      const start = Math.max(0, Math.floor(offset));
+      const limit = Math.max(0, Math.floor(maxChars));
+      const { content, truncated } = truncateWithMarker(extracted.slice(start), limit);
+      const result: FetchResult = { url: rawUrl, finalUrl: url.toString(), content, truncated };
+      if (start + limit < extracted.length) result.nextOffset = start + limit;
+      if (title) result.title = title;
+      if (byline) result.byline = byline;
+      if (pages !== undefined) result.pages = pages;
       return result;
     }
     throw new FetchError(`Too many redirects (max ${MAX_REDIRECTS}).`);

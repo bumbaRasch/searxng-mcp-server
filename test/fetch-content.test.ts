@@ -1,10 +1,37 @@
-import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { describe, expect, it, vi } from 'vitest';
 import { fetchContent, FetchError, MAX_REDIRECTS } from '../src/fetch.js';
 import type { FetchLike } from '../src/http.js';
+import { fetchInput, fetchOutput } from '../src/schemas.js';
 import type { LookupAll } from '../src/ssrf.js';
 import { asFetchLike, HTML_PAGE, makeConfig } from './helpers.js';
 
+// Flag-gated unpdf mock: 'real' passes through; the other modes force the
+// defensive paths in src/pdf.ts that a healthy PDF never exercises.
+const unpdfMock = vi.hoisted(() => ({ mode: 'real' }));
+vi.mock('unpdf', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('unpdf')>();
+  return {
+    ...actual,
+    getMeta: ((pdf: Parameters<typeof actual.getMeta>[0]) => {
+      if (unpdfMock.mode === 'meta-failure') return Promise.reject(new Error('xref gone'));
+      if (unpdfMock.mode === 'meta-empty') return Promise.resolve({ info: {}, metadata: {} });
+      if (unpdfMock.mode === 'meta-blank')
+        return Promise.resolve({ info: { Title: '   ' }, metadata: {} });
+      return actual.getMeta(pdf);
+    }) as typeof actual.getMeta,
+    extractText: ((pdf: Parameters<typeof actual.extractText>[0]) => {
+      if (unpdfMock.mode === 'merged-text')
+        return Promise.resolve({ totalPages: 2, text: 'merged text from unpdf' });
+      return actual.extractText(pdf, { mergePages: false });
+    }) as typeof actual.extractText,
+  };
+});
+
 const config = makeConfig({ searxngUrl: 'http://localhost:8888' });
+
+/** Two-page fixture with /Title "Sample PDF Fixture" (see test/fixtures). */
+const PDF_BYTES = new Uint8Array(readFileSync(new URL('./fixtures/sample.pdf', import.meta.url)));
 
 describe('fetchContent', () => {
   it('fetches and returns markdown with metadata', async () => {
@@ -130,6 +157,66 @@ describe('fetchContent', () => {
   });
 });
 
+describe('offset continuation', () => {
+  // 3000 whitespace-free chars so extraction returns the body verbatim.
+  const longPage = `<!doctype html><html><head><title>Long</title></head><body><article><p>${'abcdefghij'.repeat(300)}</p></article></body></html>`;
+  const longFetch = (): FetchLike =>
+    asFetchLike(async () => new Response(longPage, { status: 200 }));
+
+  it('extracts the fixture at exactly 3000 chars', async () => {
+    const full = await fetchContent(config, 'https://example.test/long', {
+      fetchImpl: longFetch(),
+    });
+    expect(full.truncated).toBe(false);
+    expect(full.content.length).toBe(3000);
+  });
+
+  it('windows a 3000-char page: offset 0/1000/2000 → nextOffset 1000/2000/absent', async () => {
+    const full = await fetchContent(config, 'https://example.test/long', {
+      fetchImpl: longFetch(),
+    });
+
+    const at0 = await fetchContent(config, 'https://example.test/long', {
+      fetchImpl: longFetch(),
+      maxChars: 1000,
+    });
+    expect(at0.nextOffset).toBe(1000);
+    expect(at0.truncated).toBe(true);
+    expect(at0.content.length).toBe(1000);
+    expect(at0.content.startsWith(full.content.slice(0, 100))).toBe(true);
+    expect(at0.content.endsWith('[Content truncated]')).toBe(true);
+
+    const at1000 = await fetchContent(config, 'https://example.test/long', {
+      fetchImpl: longFetch(),
+      maxChars: 1000,
+      offset: 1000,
+    });
+    expect(at1000.nextOffset).toBe(2000);
+    expect(at1000.truncated).toBe(true);
+    expect(at1000.content.startsWith(full.content.slice(1000, 1100))).toBe(true);
+
+    const at2000 = await fetchContent(config, 'https://example.test/long', {
+      fetchImpl: longFetch(),
+      maxChars: 1000,
+      offset: 2000,
+    });
+    expect(at2000.nextOffset).toBeUndefined();
+    expect(at2000.truncated).toBe(false);
+    expect(at2000.content).toBe(full.content.slice(2000));
+  });
+
+  it('returns an empty window with no nextOffset when offset is past the end', async () => {
+    const past = await fetchContent(config, 'https://example.test/long', {
+      fetchImpl: longFetch(),
+      maxChars: 1000,
+      offset: 5000,
+    });
+    expect(past.content).toBe('');
+    expect(past.nextOffset).toBeUndefined();
+    expect(past.truncated).toBe(false);
+  });
+});
+
 describe('Content-Type gate', () => {
   it('rejects binary content types', async () => {
     const fetchImpl = asFetchLike(
@@ -249,5 +336,164 @@ describe('DNS rebinding (TOCTOU)', () => {
     }
     expect(messages.join('\n')).toMatch(/blocked private address for rebind\.test: 10\.0\.0\.1/i);
     expect(calls).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('PDF content', () => {
+  function pdfFetch(contentType = 'application/pdf'): FetchLike {
+    return asFetchLike(
+      async () =>
+        new Response(PDF_BYTES, {
+          status: 200,
+          headers: { 'content-type': contentType },
+        }),
+    );
+  }
+
+  it('extracts per-page text, page count and metadata title', async () => {
+    const result = await fetchContent(config, 'https://example.test/doc.pdf', {
+      fetchImpl: pdfFetch(),
+    });
+    expect(result.pages).toBe(2);
+    expect(result.content).toContain('[Page 1]');
+    expect(result.content).toContain('[Page 2]');
+    expect(result.content).toContain('Hello from page one.');
+    expect(result.content).toContain('Second page text.');
+    expect(result.title).toBe('Sample PDF Fixture');
+    expect(result.truncated).toBe(false);
+  });
+
+  it('applies the truncation marker below max_chars', async () => {
+    const result = await fetchContent(config, 'https://example.test/doc.pdf', {
+      fetchImpl: pdfFetch(),
+      maxChars: 40,
+    });
+    expect(result.truncated).toBe(true);
+    expect(result.content).toContain('[Page 1]');
+    expect(result.content).toContain('[Content truncated]');
+  });
+
+  it('windows the extracted PDF text via offset and reports nextOffset', async () => {
+    const full = await fetchContent(config, 'https://example.test/doc.pdf', {
+      fetchImpl: pdfFetch(),
+    });
+    const windowed = await fetchContent(config, 'https://example.test/doc.pdf', {
+      fetchImpl: pdfFetch(),
+      maxChars: 30,
+      offset: 5,
+    });
+    // The window is the remainder capped at max_chars; the marker fits inside it.
+    expect(windowed.content).toBe(`${full.content.slice(5, 14)}\n\n[Content truncated]`);
+    expect(windowed.nextOffset).toBe(35);
+    expect(windowed.truncated).toBe(true);
+    expect(windowed.pages).toBe(2);
+  });
+
+  it('rejects a PDF body larger than the byte cap', async () => {
+    const oversize = new Uint8Array(150_000);
+    const fetchImpl = asFetchLike(
+      async () =>
+        new Response(oversize, {
+          status: 200,
+          headers: { 'content-type': 'application/pdf' },
+        }),
+    );
+    await expect(
+      fetchContent(config, 'https://example.test/big.pdf', { fetchImpl }),
+    ).rejects.toThrow(/byte limit/i);
+  });
+
+  it('reports corrupt PDF bytes as a sanitized FetchError, not a crash', async () => {
+    const corrupt = new Uint8Array(Buffer.from('this is definitely not a pdf at all'));
+    const fetchImpl = asFetchLike(
+      async () =>
+        new Response(corrupt, {
+          status: 200,
+          headers: { 'content-type': 'application/pdf' },
+        }),
+    );
+    const error = await fetchContent(config, 'https://example.test/corrupt.pdf', {
+      fetchImpl,
+    }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(FetchError);
+    expect((error as FetchError).name).toBe('FetchError');
+    expect((error as FetchError).message).toMatch(/Failed to parse PDF/i);
+    expect((error as FetchError).message).not.toMatch(/Exception/);
+  });
+
+  it('accepts application/pdf with parameters and rejects prefix over-matches', async () => {
+    const ok = await fetchContent(config, 'https://example.test/doc.pdf', {
+      fetchImpl: pdfFetch('application/pdf;x=1'),
+    });
+    expect(ok.pages).toBe(2);
+    const fetchImpl = asFetchLike(
+      async () =>
+        new Response('x', { status: 200, headers: { 'content-type': 'application/pdfx' } }),
+    );
+    await expect(
+      fetchContent(config, 'https://example.test/doc.pdfx', { fetchImpl }),
+    ).rejects.toThrow(/Content-Type/i);
+  });
+
+  it('rejects PDF responses without a readable body stream', async () => {
+    const bodyless = {
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/pdf' }),
+      body: null,
+      text: async () => '',
+    };
+    const fetchImpl = asFetchLike(async () => bodyless);
+    await expect(
+      fetchContent(config, 'https://example.test/empty.pdf', { fetchImpl }),
+    ).rejects.toThrow(/no readable body/i);
+  });
+
+  it('tolerates metadata failures, blank titles and merged text defensively', async () => {
+    unpdfMock.mode = 'meta-failure';
+    const metaFailed = await fetchContent(config, 'https://example.test/doc.pdf', {
+      fetchImpl: pdfFetch(),
+    });
+    expect(metaFailed.pages).toBe(2);
+    expect(metaFailed.title).toBeUndefined();
+
+    unpdfMock.mode = 'meta-empty';
+    expect(
+      (await fetchContent(config, 'https://example.test/doc.pdf', { fetchImpl: pdfFetch() })).title,
+    ).toBeUndefined();
+    unpdfMock.mode = 'meta-blank';
+    expect(
+      (await fetchContent(config, 'https://example.test/doc.pdf', { fetchImpl: pdfFetch() })).title,
+    ).toBeUndefined();
+
+    unpdfMock.mode = 'merged-text';
+    const merged = await fetchContent(config, 'https://example.test/doc.pdf', {
+      fetchImpl: pdfFetch(),
+    });
+    expect(merged.pages).toBe(2);
+    expect(merged.content).toContain('[Page 1]');
+    expect(merged.content).toContain('merged text from unpdf');
+    unpdfMock.mode = 'real';
+  });
+});
+
+describe('fetch offset schema', () => {
+  it('allows offset 0 and rejects negative and fractional offsets', () => {
+    expect(fetchInput.safeParse({ url: 'https://x.test' }).success).toBe(true);
+    expect(fetchInput.safeParse({ url: 'https://x.test', offset: 0 }).success).toBe(true);
+    expect(fetchInput.safeParse({ url: 'https://x.test', offset: -1 }).success).toBe(false);
+    expect(fetchInput.safeParse({ url: 'https://x.test', offset: 1.5 }).success).toBe(false);
+  });
+
+  it('keeps nextOffset optional and non-negative in fetchOutput', () => {
+    const base = {
+      url: 'https://x.test',
+      finalUrl: 'https://x.test/',
+      content: 'text',
+      truncated: false,
+    };
+    expect(fetchOutput.safeParse(base).success).toBe(true);
+    expect(fetchOutput.safeParse({ ...base, nextOffset: 0 }).success).toBe(true);
+    expect(fetchOutput.safeParse({ ...base, nextOffset: -1 }).success).toBe(false);
   });
 });
