@@ -5,6 +5,7 @@ import type { Config } from './config.js';
 import { extractArticle, stripToText } from './extract.js';
 import { isRedirect, readCapped, type FetchLike } from './http.js';
 import { toMarkdown, truncateWithMarker } from './markdown.js';
+import { extractPdfContent, readPdfResponse, type PdfExtraction } from './pdf.js';
 import type { FetchResult } from './schemas.js';
 import { assertUrlAllowed, createGuardedDispatcher, type LookupAll } from './ssrf.js';
 
@@ -19,7 +20,9 @@ export const MAX_REDIRECTS = 5;
 const MAX_CONTENT_TYPE_CHARS = 100;
 // Exact tokens with a parameter boundary: prefix siblings like xml-dtd or
 // jsonp are NOT textual; any application/*+xml (rss, atom, xhtml, svg…) is.
-const ALLOWED_CONTENT_TYPE = /^(text\/[\w.+-]*|application\/(json|xml|[\w.+-]+\+xml))\s*(;|$)/i;
+// application/pdf passes the gate but takes the PDF branch instead of Readability (D4).
+const ALLOWED_CONTENT_TYPE = /^(text\/[\w.+-]*|application\/(json|xml|pdf|[\w.+-]+\+xml))\s*(;|$)/i;
+const PDF_CONTENT_TYPE = /^application\/pdf\s*(;|$)/i;
 
 export class FetchError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
@@ -66,7 +69,10 @@ export async function fetchContent(
       const response = await fetchImpl(url.toString(), {
         redirect: 'manual',
         signal: controller.signal,
-        headers: { 'User-Agent': config.userAgent, Accept: 'text/html,application/xhtml+xml' },
+        headers: {
+          'User-Agent': config.userAgent,
+          Accept: 'text/html,application/xhtml+xml,application/pdf',
+        },
         dispatcher,
       });
 
@@ -89,6 +95,27 @@ export async function fetchContent(
         throw new FetchError(
           `Refusing to fetch ${url.toString()}: unsupported Content-Type "${contentType.slice(0, MAX_CONTENT_TYPE_CHARS)}".`,
         );
+      }
+
+      if (PDF_CONTENT_TYPE.test(contentType)) {
+        const data = await readPdfResponse(response, config.maxResponseBytes);
+        let extraction: PdfExtraction;
+        try {
+          extraction = await extractPdfContent(data);
+        } catch (error) {
+          // unpdf/pdf.js failures carry internals; surface a sanitized FetchError.
+          throw new FetchError(`Failed to parse PDF from ${url.toString()}.`, { cause: error });
+        }
+        const { content, truncated } = truncateWithMarker(extraction.content, maxChars);
+        const result: FetchResult = {
+          url: rawUrl,
+          finalUrl: url.toString(),
+          content,
+          truncated,
+          pages: extraction.pages,
+        };
+        if (extraction.title) result.title = extraction.title;
+        return result;
       }
 
       const html = await readCapped(response, config.maxResponseBytes);
