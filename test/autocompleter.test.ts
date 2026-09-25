@@ -6,6 +6,7 @@ import {
   formatAutocomplete,
   mapAutocompleteResponse,
 } from '../src/autocompleter.js';
+import { TtlCache } from '../src/cache.js';
 import { SearxngError } from '../src/searxng.js';
 import { asFetchLike, jsonResponse, makeConfig } from './helpers.js';
 
@@ -93,9 +94,8 @@ describe('autocomplete client', () => {
 
   it('falls back to global fetch when no fetchImpl is injected', async () => {
     // 'not-a-url' makes global fetch reject before any network access.
-    await expect(autocomplete({ ...config, searxngUrl: 'not-a-url' }, 'q')).rejects.toThrow(
-      /the configured SEARXNG URL/,
-    );
+    const unparseable = { ...config, searxngUrl: 'not-a-url', searxngUrls: ['not-a-url'] };
+    await expect(autocomplete(unparseable, 'q')).rejects.toThrow(/the configured SEARXNG URL/);
   });
 
   it('explains a 403 via the limiter hint', async () => {
@@ -171,9 +171,10 @@ describe('autocomplete client', () => {
     const fetchImpl = asFetchLike(async () => {
       throw new Error('ECONNREFUSED');
     });
-    await expect(
-      autocomplete({ ...config, searxngUrl: 'not-a-url' }, 'q', { fetchImpl }),
-    ).rejects.toThrow(/the configured SEARXNG URL/);
+    const unparseable = { ...config, searxngUrl: 'not-a-url', searxngUrls: ['not-a-url'] };
+    await expect(autocomplete(unparseable, 'q', { fetchImpl })).rejects.toThrow(
+      /the configured SEARXNG URL/,
+    );
   });
 
   it('wraps connection failures with the configured URL and never leaks credentials', async () => {
@@ -224,6 +225,63 @@ describe('autocomplete client', () => {
       text: async () => '',
     }));
     await expect(autocomplete(config, 'q', { fetchImpl })).rejects.toThrow(/could not be read/i);
+  });
+});
+
+describe('autocomplete failover and cache (D8/D9)', () => {
+  const failoverConfig = makeConfig({
+    searxngUrls: ['http://searx.test:8888', 'http://backup.test:8888'],
+  });
+
+  it('fails over to the next instance on 403 and 429', async () => {
+    for (const status of [403, 429]) {
+      const seen: string[] = [];
+      const fetchImpl = asFetchLike(async (url: string) => {
+        seen.push(url);
+        if (seen.length === 1) return new Response('no', { status });
+        return jsonResponse(['one']);
+      });
+      const res = await autocomplete(failoverConfig, 'q', { fetchImpl });
+      expect(seen).toEqual([
+        'http://searx.test:8888/autocompleter?q=q',
+        'http://backup.test:8888/autocompleter?q=q',
+      ]);
+      expect(res.suggestions).toEqual(['one']);
+    }
+  });
+
+  it('does not fail over on 400 (parameter errors fail everywhere)', async () => {
+    const seen: string[] = [];
+    const fetchImpl = asFetchLike(async (url: string) => {
+      seen.push(url);
+      return new Response('bad', { status: 400 });
+    });
+    await expect(autocomplete(failoverConfig, 'q', { fetchImpl })).rejects.toThrow(/400/);
+    expect(seen).toHaveLength(1);
+  });
+
+  it('serves repeat calls from the injected cache without hitting the instance', async () => {
+    let calls = 0;
+    const fetchImpl = asFetchLike(async () => {
+      calls += 1;
+      return jsonResponse(['s1', 's2']);
+    });
+    const cache = new TtlCache<unknown>(128, 60_000);
+    const first = await autocomplete(config, 'q', { fetchImpl, cache });
+    const second = await autocomplete(config, 'q', { fetchImpl, cache });
+    expect(calls).toBe(1);
+    expect(second).toEqual(first);
+  });
+
+  it('keeps the cache off by default (no injection, no caching)', async () => {
+    let calls = 0;
+    const fetchImpl = asFetchLike(async () => {
+      calls += 1;
+      return jsonResponse(['s1']);
+    });
+    await autocomplete(config, 'q', { fetchImpl });
+    await autocomplete(config, 'q', { fetchImpl });
+    expect(calls).toBe(2);
   });
 });
 

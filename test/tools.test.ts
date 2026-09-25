@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { describe, expect, it } from 'vitest';
 import { autocompleteInput, autocompleteOutput } from '../src/autocompleter.js';
+import { TtlCache } from '../src/cache.js';
 import type { FetchLike } from '../src/http.js';
 import type { LookupAll } from '../src/ssrf.js';
 import {
@@ -612,6 +613,19 @@ describe('handleAutocomplete', () => {
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toMatch(/403/);
     expect(result.content[0]?.text).not.toContain('\n');
+  });
+
+  it('threads deps.cache through to the autocompleter client', async () => {
+    let calls = 0;
+    const fetchImpl = asFetchLike(async () => {
+      calls += 1;
+      return jsonResponse(['sears']);
+    });
+    const cache = new TtlCache<unknown>(128, 60_000);
+    const args = autocompleteInput.parse({ query: 'sear' });
+    await handleAutocomplete(config, args, { fetchImpl, cache });
+    await handleAutocomplete(config, args, { fetchImpl, cache });
+    expect(calls).toBe(1);
   });
 
   it('registers with the documented title and an instance-language description', () => {

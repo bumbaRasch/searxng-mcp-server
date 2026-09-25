@@ -145,7 +145,7 @@ function searchUrl(base: string, params: SearchParams): string {
   return `${base}/search?${buildSearchParams(params).toString()}`;
 }
 
-type ExplainStatus = (status: number, base: string) => string;
+export type ExplainStatus = (status: number, base: string) => string;
 
 const SEARCH_EXPLAIN: ExplainStatus = (status, base) => {
   if (status === 403) {
@@ -168,8 +168,12 @@ function failoverStatus(status: number): boolean {
   return status >= 500 || status === 429 || status === 403;
 }
 
-interface InstanceRequest {
+/** Per-endpoint profile for the shared instance client: endpoint-specific
+ * error wording, optional extra headers, and the injectable seams. */
+export interface InstanceRequest {
   fetchImpl?: FetchLike | undefined;
+  /** Extra headers merged over the shared instance headers. */
+  headers?: Record<string, string> | undefined;
   explainStatus: ExplainStatus;
   explainBadJson: string;
 }
@@ -190,7 +194,7 @@ async function fetchInstanceJson(
     let response: Awaited<ReturnType<FetchLike>>;
     try {
       response = await fetchImpl(url, {
-        headers: instanceHeaders(config),
+        headers: { ...instanceHeaders(config), ...opts.headers },
         signal: controller.signal,
         redirect: 'manual',
       });
@@ -246,15 +250,15 @@ async function fetchInstanceJson(
 }
 
 /** Sequential instance attempts (D8): retry only network errors, timeouts, 5xx,
- * 429 and 403 — never 400; exhaustion surfaces the last error, taxonomy intact. */
-async function fetchWithFailover(
+ * 429 and 403 — never 400; exhaustion surfaces the last error, taxonomy intact.
+ * `config.searxngUrls` always lists the primary first (config contract). */
+export async function fetchWithFailover(
   config: Config,
   buildUrl: (base: string) => string,
   opts: InstanceRequest,
 ): Promise<unknown> {
-  const instances = config.searxngUrls.length > 0 ? config.searxngUrls : [config.searxngUrl];
   let lastError: unknown;
-  for (const base of instances) {
+  for (const base of config.searxngUrls) {
     try {
       return await fetchInstanceJson(config, buildUrl(base), opts);
     } catch (error) {
@@ -292,7 +296,7 @@ export async function searchBatch(
   config: Config,
   queries: string[],
   params: SearchParams,
-  opts: { fetchImpl?: FetchLike | undefined } = {},
+  opts: ClientOptions = {},
 ): Promise<SearchBatchResponse> {
   const batch = await Promise.all(
     queries.map((query) => search(config, { ...params, query }, opts)),

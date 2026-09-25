@@ -143,7 +143,7 @@ export const handleListEngines = createCategoryHandler(
 export const handleAutocomplete = createCategoryHandler(
   'Autocomplete failed',
   (config, args: AutocompleteInput, deps) =>
-    autocomplete(config, args.query, { fetchImpl: deps.fetchImpl }),
+    autocomplete(config, args.query, { fetchImpl: deps.fetchImpl, cache: deps.cache }),
   formatAutocomplete,
 );
 
