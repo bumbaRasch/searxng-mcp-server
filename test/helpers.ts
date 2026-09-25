@@ -15,7 +15,9 @@ export function makeConfig(overrides: Partial<Config> = {}): Config {
   return {
     transport: 'stdio',
     searxngUrl: 'http://searx.test:8888',
+    searxngUrls: ['http://searx.test:8888'],
     searxngTimeoutMs: 1000,
+    cacheTtlMs: 0,
     fetchTimeoutMs: 1000,
     shutdownTimeoutMs: 5000,
     maxChars: 10_000,

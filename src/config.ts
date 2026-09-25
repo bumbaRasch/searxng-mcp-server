@@ -3,9 +3,13 @@ export type Transport = 'stdio' | 'http';
 export interface Config {
   transport: Transport;
   searxngUrl: string;
+  /** Failover instances after `searxngUrl`, in try order (`SEARXNG_URLS`); the primary is always first. */
+  searxngUrls: string[];
   searxngUsername?: string;
   searxngPassword?: string;
   searxngTimeoutMs: number;
+  /** Response cache TTL in ms (`SEARXNG_CACHE_TTL_MS`); 0 disables caching (default, D9). */
+  cacheTtlMs: number;
   fetchTimeoutMs: number;
   shutdownTimeoutMs: number;
   maxChars: number;
@@ -29,6 +33,7 @@ type Warn = (message: string) => void;
 
 const DEFAULT_SEARXNG_URL = 'http://localhost:8888';
 const DEFAULT_SEARXNG_TIMEOUT_MS = 10_000;
+const DEFAULT_CACHE_TTL_MS = 0;
 const DEFAULT_FETCH_TIMEOUT_MS = 15_000;
 const DEFAULT_MAX_CHARS = 25_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
@@ -74,36 +79,74 @@ function strEnv(env: Env, key: string, fallback: string): string {
   return raw === undefined || raw.trim() === '' ? fallback : raw;
 }
 
-function urlEnv(env: Env, key: string, fallback: string, warn: Warn): string {
-  const raw = strEnv(env, key, fallback);
-  const fail = (reason: string): string => {
-    if (raw !== fallback) {
-      let safe = raw;
-      try {
-        const url = new URL(raw);
-        url.username = '';
-        url.password = '';
-        safe = url.toString();
-      } catch {
-        // not a URL at all — nothing credential-shaped to strip
-      }
-      warn(`${key}: ignoring "${safe}" (${reason}), using ${fallback}`);
-    }
-    return fallback;
-  };
+/** WHATWG-parse one instance URL; a returned reason explains why it is unusable. */
+function parseInstanceUrl(raw: string): { url: URL } | { reason: string } {
   let url: URL;
   try {
     url = new URL(raw);
   } catch {
-    return fail('not a valid URL');
+    return { reason: 'not a valid URL' };
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    return fail('only http/https are supported');
+    return { reason: 'only http/https are supported' };
   }
+  return { url };
+}
+
+/** Credential-free rendering of a URL for warning messages (secrets never logged). */
+function redactUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    url.username = '';
+    url.password = '';
+    return url.toString();
+  } catch {
+    // not a URL at all — nothing credential-shaped to strip
+    return raw;
+  }
+}
+
+function normalizeInstanceOrigin(url: URL): string {
   url.username = '';
   url.password = '';
   const path = url.pathname.replace(/\/+$/, '');
   return `${url.origin}${path === '/' ? '' : path}`;
+}
+
+function urlEnv(env: Env, key: string, fallback: string, warn: Warn): string {
+  const raw = strEnv(env, key, fallback);
+  const parsed = parseInstanceUrl(raw);
+  if ('reason' in parsed) {
+    if (raw !== fallback) {
+      warn(`${key}: ignoring "${redactUrl(raw)}" (${parsed.reason}), using ${fallback}`);
+    }
+    return fallback;
+  }
+  return normalizeInstanceOrigin(parsed.url);
+}
+
+/** Extra failover instances (`SEARXNG_URLS`), validated like `SEARXNG_URL`:
+ * invalid entries are warned about and skipped, duplicates of earlier ones dropped. */
+function urlsEnv(env: Env, key: string, primary: string, warn: Warn): string[] {
+  const raw = env[key];
+  if (raw === undefined || raw.trim() === '') return [];
+  const seen = new Set([primary]);
+  const urls: string[] = [];
+  for (const item of raw.split(',')) {
+    const candidate = item.trim();
+    if (candidate === '') continue;
+    const parsed = parseInstanceUrl(candidate);
+    if ('reason' in parsed) {
+      warn(`${key}: ignoring entry "${redactUrl(candidate)}" (${parsed.reason})`);
+      continue;
+    }
+    const normalized = normalizeInstanceOrigin(parsed.url);
+    if (!seen.has(normalized)) {
+      seen.add(normalized);
+      urls.push(normalized);
+    }
+  }
+  return urls;
 }
 
 function listEnv(env: Env, key: string): string[] {
@@ -127,10 +170,13 @@ function transportEnv(env: Env, warn: Warn): Transport {
 }
 
 export function loadConfig(env: Env, version: string, warn: Warn = () => {}): Config {
+  const searxngUrl = urlEnv(env, 'SEARXNG_URL', DEFAULT_SEARXNG_URL, warn);
   const config: Config = {
     transport: transportEnv(env, warn),
-    searxngUrl: urlEnv(env, 'SEARXNG_URL', DEFAULT_SEARXNG_URL, warn),
+    searxngUrl,
+    searxngUrls: [searxngUrl, ...urlsEnv(env, 'SEARXNG_URLS', searxngUrl, warn)],
     searxngTimeoutMs: intEnv(env, 'SEARXNG_TIMEOUT_MS', DEFAULT_SEARXNG_TIMEOUT_MS, warn),
+    cacheTtlMs: intEnv(env, 'SEARXNG_CACHE_TTL_MS', DEFAULT_CACHE_TTL_MS, warn, 0),
     fetchTimeoutMs: intEnv(env, 'FETCH_TIMEOUT_MS', DEFAULT_FETCH_TIMEOUT_MS, warn),
     shutdownTimeoutMs: intEnv(
       env,
