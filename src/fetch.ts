@@ -11,6 +11,7 @@ import { assertUrlAllowed, createGuardedDispatcher, type LookupAll } from './ssr
 
 interface FetchOptions {
   maxChars?: number | undefined;
+  offset?: number | undefined;
   timeoutMs?: number | undefined;
   fetchImpl?: FetchLike | undefined;
   lookup?: LookupAll | undefined;
@@ -41,6 +42,7 @@ export async function fetchContent(
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   const fetchImpl: FetchLike = opts.fetchImpl ?? (undiciFetch as FetchLike);
   const maxChars = opts.maxChars ?? config.maxChars;
+  const offset = opts.offset ?? 0;
   const timeoutMs = opts.timeoutMs ?? config.fetchTimeoutMs;
   const lookupOpts = opts.lookup ? { lookup: opts.lookup } : {};
   // Pre-validation and the dispatcher share the same guarded lookup, so both
@@ -97,6 +99,10 @@ export async function fetchContent(
         );
       }
 
+      let extracted: string;
+      let pages: number | undefined;
+      let title: string | undefined;
+      let byline: string | undefined;
       if (PDF_CONTENT_TYPE.test(contentType)) {
         const data = await readPdfResponse(response, config.maxResponseBytes);
         let extraction: PdfExtraction;
@@ -106,33 +112,28 @@ export async function fetchContent(
           // unpdf/pdf.js failures carry internals; surface a sanitized FetchError.
           throw new FetchError(`Failed to parse PDF from ${url.toString()}.`, { cause: error });
         }
-        const { content, truncated } = truncateWithMarker(extraction.content, maxChars);
-        const result: FetchResult = {
-          url: rawUrl,
-          finalUrl: url.toString(),
-          content,
-          truncated,
-          pages: extraction.pages,
-        };
-        if (extraction.title) result.title = extraction.title;
-        return result;
+        extracted = extraction.content;
+        pages = extraction.pages;
+        title = extraction.title;
+      } else {
+        const html = await readCapped(response, config.maxResponseBytes);
+        const article = extractArticle(html, url.toString());
+        extracted = article.contentHtml
+          ? toMarkdown(article.contentHtml)
+          : stripToText(article.textContent ?? html);
+        title = article.title;
+        byline = article.byline;
       }
 
-      const html = await readCapped(response, config.maxResponseBytes);
-      const article = extractArticle(html, url.toString());
-      const markdown = article.contentHtml
-        ? toMarkdown(article.contentHtml)
-        : stripToText(article.textContent ?? html);
-      const { content, truncated } = truncateWithMarker(markdown, maxChars);
-
-      const result: FetchResult = {
-        url: rawUrl,
-        finalUrl: url.toString(),
-        content,
-        truncated,
-      };
-      if (article.title) result.title = article.title;
-      if (article.byline) result.byline = article.byline;
+      // Continuation window (D5): slice at the offset first, then the existing cap.
+      const start = Math.max(0, Math.floor(offset));
+      const limit = Math.max(0, Math.floor(maxChars));
+      const { content, truncated } = truncateWithMarker(extracted.slice(start), limit);
+      const result: FetchResult = { url: rawUrl, finalUrl: url.toString(), content, truncated };
+      if (start + limit < extracted.length) result.nextOffset = start + limit;
+      if (title) result.title = title;
+      if (byline) result.byline = byline;
+      if (pages !== undefined) result.pages = pages;
       return result;
     }
     throw new FetchError(`Too many redirects (max ${MAX_REDIRECTS}).`);

@@ -101,6 +101,7 @@ export async function handleFetch(
   try {
     const result = await fetchContent(config, args.url, {
       maxChars: args.max_chars,
+      offset: args.offset,
       timeoutMs: args.timeout_ms,
       fetchImpl: deps.fetchImpl,
       lookup: deps.lookup,

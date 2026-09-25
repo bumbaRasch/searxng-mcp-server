@@ -119,6 +119,12 @@ export const fetchInput = z.object({
     .max(120_000)
     .optional()
     .describe('Request timeout in milliseconds (at most 120000).'),
+  offset: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe('Character offset into the extracted content, to continue reading via nextOffset.'),
 });
 export type FetchInput = z.infer<typeof fetchInput>;
 
@@ -131,6 +137,8 @@ export const fetchOutput = z.object({
   truncated: z.boolean(),
   // Present only when the fetched resource was a PDF (D4).
   pages: z.number().int().positive().optional(),
+  // Present only when content remains beyond the returned window (D5).
+  nextOffset: z.number().int().nonnegative().optional(),
 });
 export type FetchResult = z.infer<typeof fetchOutput>;
 
