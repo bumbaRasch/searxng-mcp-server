@@ -1,4 +1,5 @@
 import type { McpServer } from '@modelcontextprotocol/server';
+import type { TtlCache } from './cache.js';
 import type { Config } from './config.js';
 import { fetchContent } from './fetch.js';
 import {
@@ -46,6 +47,8 @@ type ToolResult<T = unknown> = {
 export interface ToolDeps {
   fetchImpl?: FetchLike;
   lookup?: LookupAll;
+  /** Opt-in D9 response cache for instance-bound GETs; config-driven via createServer. */
+  cache?: TtlCache<unknown> | undefined;
 }
 
 const UNTRUSTED_SUFFIX =
@@ -82,7 +85,7 @@ function createCategoryHandler<Args, Response>(
 export const handleSearch = createCategoryHandler(
   'Search failed',
   (config, args: SearchInput, deps) =>
-    search(config, toSearchParams(args), { fetchImpl: deps.fetchImpl }),
+    search(config, toSearchParams(args), { fetchImpl: deps.fetchImpl, cache: deps.cache }),
   formatSearchResults,
 );
 
@@ -111,7 +114,8 @@ export async function handleFetch(
 
 export const handleListEngines = createCategoryHandler(
   'List engines failed',
-  (config, _args: ListEnginesInput, deps) => listEngines(config, { fetchImpl: deps.fetchImpl }),
+  (config, _args: ListEnginesInput, deps) =>
+    listEngines(config, { fetchImpl: deps.fetchImpl, cache: deps.cache }),
   formatListEngines,
 );
 
@@ -129,6 +133,7 @@ function categoryToolHandler(definition: CategoryDefinition<AnyCategoryResult>) 
     (config: Config, args: CategoryToolInput, deps: ToolDeps) =>
       runCategorySearch(definition, config, toCategorySearchParams(args, definition.upstream), {
         fetchImpl: deps.fetchImpl,
+        cache: deps.cache,
       }),
     (response) => formatCategoryResults(definition, response),
   );

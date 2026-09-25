@@ -1,5 +1,7 @@
 import { URLSearchParams } from 'node:url';
+import { cached } from './cache.js';
 import type { Config } from './config.js';
+import type { TtlCache } from './cache.js';
 import { isRedirect, readCapped, type FetchLike } from './http.js';
 import {
   asStringArray,
@@ -32,10 +34,19 @@ import {
 const MAX_INFOBOX_ID_CHARS = 200;
 const MAX_INFOBOX_URL_CHARS = 500;
 
+/** Client call options: injected fetch plus the optional D9 response cache. */
+export interface ClientOptions {
+  fetchImpl?: FetchLike | undefined;
+  cache?: TtlCache<unknown> | undefined;
+}
+
 export class SearxngError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
+  /** True when a failover instance could still answer (D8: network, timeout, 5xx, 429, 403). */
+  readonly retryable: boolean;
+  constructor(message: string, options?: { cause?: unknown; retryable?: boolean | undefined }) {
     super(message, options);
     this.name = 'SearxngError';
+    this.retryable = options?.retryable === true;
   }
 }
 
@@ -117,28 +128,56 @@ function origin(url: string): string {
   }
 }
 
-async function fetchSearchJson(
-  config: Config,
-  params: SearchParams,
-  opts: { fetchImpl?: FetchLike | undefined } = {},
-): Promise<unknown> {
-  // No SSRF guard by design: SEARXNG_URL is operator-trusted config; redirects
-  // are refused so a compromised instance cannot pivot us onto internal hosts.
+function searchUrl(base: string, params: SearchParams): string {
+  return `${base}/search?${buildSearchParams(params).toString()}`;
+}
 
+type ExplainStatus = (status: number, base: string) => string;
+
+const SEARCH_EXPLAIN: ExplainStatus = (status, base) => {
+  if (status === 403) {
+    return 'SearXNG returned 403: the JSON API is disabled. Add "json" to search.formats in settings.yml.';
+  }
+  if (status === 400) {
+    return 'SearXNG rejected the query parameters (400). Check categories, engines, language, time_range and safesearch.';
+  }
+  if (status === 429) {
+    return 'SearXNG returned 429: rate limited. Check the limiter settings in settings.yml.';
+  }
+  return `SearXNG request failed with HTTP ${status} at ${origin(base)}.`;
+};
+
+const CONFIG_EXPLAIN: ExplainStatus = (status) =>
+  `Could not read the SearXNG instance configuration (HTTP ${status}). The /config endpoint may be disabled.`;
+
+/** D8 failover statuses: 5xx, 429 (rate limited) and 403 (JSON API disabled). */
+function failoverStatus(status: number): boolean {
+  return status >= 500 || status === 429 || status === 403;
+}
+
+interface InstanceRequest {
+  fetchImpl?: FetchLike | undefined;
+  explainStatus: ExplainStatus;
+  explainBadJson: string;
+}
+
+async function fetchInstanceJson(
+  config: Config,
+  url: string,
+  opts: InstanceRequest,
+): Promise<unknown> {
   // Cast bridges @types/node's vendored RequestInit and undici's own types
   // (two structural copies of the same dispatcher interface).
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   const fetchImpl: FetchLike = opts.fetchImpl ?? (fetch as FetchLike);
-  const url = `${config.searxngUrl}/search?${buildSearchParams(params).toString()}`;
-  const headers = instanceHeaders(config);
-
+  const base = origin(url);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), config.searxngTimeoutMs);
   try {
     let response: Awaited<ReturnType<FetchLike>>;
     try {
       response = await fetchImpl(url, {
-        headers,
+        headers: instanceHeaders(config),
         signal: controller.signal,
         redirect: 'manual',
       });
@@ -146,39 +185,25 @@ async function fetchSearchJson(
       if (controller.signal.aborted) {
         throw new SearxngError(`SearXNG timed out after ${config.searxngTimeoutMs} ms.`, {
           cause: error,
+          retryable: true,
         });
       }
       throw new SearxngError(
-        `Could not reach SearXNG at ${origin(config.searxngUrl)}. Is the container running and is SEARXNG_URL correct?`,
-        { cause: error },
+        `Could not reach SearXNG at ${base}. Is the container running and is SEARXNG_URL correct?`,
+        { cause: error, retryable: true },
       );
     }
 
     if (!response.ok) {
       await response.body?.cancel().catch(() => undefined);
-      if (response.status === 403) {
-        throw new SearxngError(
-          'SearXNG returned 403: the JSON API is disabled. Add "json" to search.formats in settings.yml.',
-        );
-      }
-      if (response.status === 400) {
-        throw new SearxngError(
-          'SearXNG rejected the query parameters (400). Check categories, engines, language, time_range and safesearch.',
-        );
-      }
-      if (response.status === 429) {
-        throw new SearxngError(
-          'SearXNG returned 429: rate limited. Check the limiter settings in settings.yml.',
-        );
-      }
       if (isRedirect(response.status)) {
         throw new SearxngError(
           `SearXNG answered with an HTTP ${response.status} redirect. SEARXNG_URL must point directly at the instance.`,
         );
       }
-      throw new SearxngError(
-        `SearXNG request failed with HTTP ${response.status} at ${origin(config.searxngUrl)}.`,
-      );
+      throw new SearxngError(opts.explainStatus(response.status, base), {
+        retryable: failoverStatus(response.status),
+      });
     }
 
     let body: string;
@@ -188,6 +213,7 @@ async function fetchSearchJson(
       if (controller.signal.aborted) {
         throw new SearxngError(`SearXNG timed out after ${config.searxngTimeoutMs} ms.`, {
           cause: error,
+          retryable: true,
         });
       }
       throw new SearxngError(
@@ -199,20 +225,50 @@ async function fetchSearchJson(
     try {
       return JSON.parse(body);
     } catch (error) {
-      throw new SearxngError(
-        'SearXNG returned a non-JSON response. Ensure format=json is enabled in settings.yml.',
-        { cause: error },
-      );
+      throw new SearxngError(opts.explainBadJson, { cause: error });
     }
   } finally {
     clearTimeout(timer);
   }
 }
 
+/** Sequential instance attempts (D8): retry only network errors, timeouts, 5xx,
+ * 429 and 403 — never 400; exhaustion surfaces the last error, taxonomy intact. */
+async function fetchWithFailover(
+  config: Config,
+  buildUrl: (base: string) => string,
+  opts: InstanceRequest,
+): Promise<unknown> {
+  const instances = config.searxngUrls.length > 0 ? config.searxngUrls : [config.searxngUrl];
+  let lastError: unknown;
+  for (const base of instances) {
+    try {
+      return await fetchInstanceJson(config, buildUrl(base), opts);
+    } catch (error) {
+      lastError = error;
+      if (!(error instanceof SearxngError) || !error.retryable) throw error;
+    }
+  }
+  throw lastError;
+}
+
+async function fetchSearchJson(config: Config, params: SearchParams, opts: ClientOptions = {}) {
+  // No SSRF guard by design: SEARXNG_URL is operator-trusted config; redirects
+  // are refused so a compromised instance cannot pivot us onto internal hosts.
+  return cached(opts.cache, 'GET', searchUrl(config.searxngUrl, params), () =>
+    fetchWithFailover(config, (base) => searchUrl(base, params), {
+      fetchImpl: opts.fetchImpl,
+      explainStatus: SEARCH_EXPLAIN,
+      explainBadJson:
+        'SearXNG returned a non-JSON response. Ensure format=json is enabled in settings.yml.',
+    }),
+  );
+}
+
 export async function search(
   config: Config,
   params: SearchParams,
-  opts: { fetchImpl?: FetchLike | undefined } = {},
+  opts: ClientOptions = {},
 ): Promise<SearchResponse> {
   const raw = await fetchSearchJson(config, params, opts);
   return mapSearchResponse(raw, params.maxResults);
@@ -223,7 +279,7 @@ export async function runCategorySearch<R>(
   definition: CategoryDefinition<R>,
   config: Config,
   params: SearchParams,
-  opts: { fetchImpl?: FetchLike | undefined } = {},
+  opts: ClientOptions = {},
 ): Promise<CategoryEnvelope<R>> {
   const raw = await fetchSearchJson(config, params, opts);
   return buildCategoryEnvelope(raw, params.maxResults, definition.projectResult);
@@ -248,7 +304,7 @@ export function mapMusicResponse(raw: unknown, maxResults: number): MusicSearchR
 export async function imageSearch(
   config: Config,
   params: SearchParams,
-  opts: { fetchImpl?: FetchLike | undefined } = {},
+  opts: ClientOptions = {},
 ): Promise<ImageSearchResponse> {
   const raw = await fetchSearchJson(config, params, opts);
   return mapImageResponse(raw, params.maxResults);
@@ -257,7 +313,7 @@ export async function imageSearch(
 export async function newsSearch(
   config: Config,
   params: SearchParams,
-  opts: { fetchImpl?: FetchLike | undefined } = {},
+  opts: ClientOptions = {},
 ): Promise<NewsSearchResponse> {
   const raw = await fetchSearchJson(config, params, opts);
   return mapNewsResponse(raw, params.maxResults);
@@ -266,7 +322,7 @@ export async function newsSearch(
 export async function videoSearch(
   config: Config,
   params: SearchParams,
-  opts: { fetchImpl?: FetchLike | undefined } = {},
+  opts: ClientOptions = {},
 ): Promise<VideoSearchResponse> {
   const raw = await fetchSearchJson(config, params, opts);
   return mapVideoResponse(raw, params.maxResults);
@@ -275,7 +331,7 @@ export async function videoSearch(
 export async function musicSearch(
   config: Config,
   params: SearchParams,
-  opts: { fetchImpl?: FetchLike | undefined } = {},
+  opts: ClientOptions = {},
 ): Promise<MusicSearchResponse> {
   const raw = await fetchSearchJson(config, params, opts);
   return mapMusicResponse(raw, params.maxResults);
@@ -295,72 +351,14 @@ function instanceHeaders(config: Config): Record<string, string> {
 
 const MAX_ENGINES = 100;
 
-async function fetchConfigJson(
-  config: Config,
-  opts: { fetchImpl?: FetchLike | undefined } = {},
-): Promise<unknown> {
-  // Cast bridges @types/node's vendored RequestInit and undici's own types
-  // (two structural copies of the same dispatcher interface).
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-  const fetchImpl: FetchLike = opts.fetchImpl ?? (fetch as FetchLike);
-  const url = `${config.searxngUrl}/config`;
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), config.searxngTimeoutMs);
-  try {
-    let response: Awaited<ReturnType<FetchLike>>;
-    try {
-      response = await fetchImpl(url, {
-        headers: instanceHeaders(config),
-        signal: controller.signal,
-        redirect: 'manual',
-      });
-    } catch (error) {
-      if (controller.signal.aborted) {
-        throw new SearxngError(`SearXNG timed out after ${config.searxngTimeoutMs} ms.`, {
-          cause: error,
-        });
-      }
-      throw new SearxngError(
-        `Could not reach SearXNG at ${origin(config.searxngUrl)}. Is the container running and is SEARXNG_URL correct?`,
-        { cause: error },
-      );
-    }
-    if (!response.ok) {
-      await response.body?.cancel().catch(() => undefined);
-      if (isRedirect(response.status)) {
-        throw new SearxngError(
-          `SearXNG answered with an HTTP ${response.status} redirect. SEARXNG_URL must point directly at the instance.`,
-        );
-      }
-      throw new SearxngError(
-        `Could not read the SearXNG instance configuration (HTTP ${response.status}). The /config endpoint may be disabled.`,
-      );
-    }
-    let body: string;
-    try {
-      body = await readCapped(response, config.maxResponseBytes);
-    } catch (error) {
-      if (controller.signal.aborted) {
-        throw new SearxngError(`SearXNG timed out after ${config.searxngTimeoutMs} ms.`, {
-          cause: error,
-        });
-      }
-      throw new SearxngError(
-        error instanceof Error ? error.message : 'SearXNG response could not be read.',
-        { cause: error },
-      );
-    }
-    try {
-      return JSON.parse(body);
-    } catch (error) {
-      throw new SearxngError('SearXNG returned a non-JSON configuration response.', {
-        cause: error,
-      });
-    }
-  } finally {
-    clearTimeout(timer);
-  }
+async function fetchConfigJson(config: Config, opts: ClientOptions = {}): Promise<unknown> {
+  return cached(opts.cache, 'GET', `${config.searxngUrl}/config`, () =>
+    fetchWithFailover(config, (base) => `${base}/config`, {
+      fetchImpl: opts.fetchImpl,
+      explainStatus: CONFIG_EXPLAIN,
+      explainBadJson: 'SearXNG returned a non-JSON configuration response.',
+    }),
+  );
 }
 
 export function mapEnginesResponse(raw: unknown): ListEnginesResponse {
@@ -388,7 +386,7 @@ export function mapEnginesResponse(raw: unknown): ListEnginesResponse {
 
 export async function listEngines(
   config: Config,
-  opts: { fetchImpl?: FetchLike | undefined } = {},
+  opts: ClientOptions = {},
 ): Promise<ListEnginesResponse> {
   const raw = await fetchConfigJson(config, opts);
   return mapEnginesResponse(raw);
