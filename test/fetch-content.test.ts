@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { fetchContent, FetchError, MAX_REDIRECTS } from '../src/fetch.js';
 import type { FetchLike } from '../src/http.js';
+import { fetchInput, fetchOutput } from '../src/schemas.js';
 import type { LookupAll } from '../src/ssrf.js';
 import { asFetchLike, HTML_PAGE, makeConfig } from './helpers.js';
 
@@ -153,6 +154,66 @@ describe('fetchContent', () => {
     await expect(fetchContent(config, 'https://example.test/a', { fetchImpl })).rejects.toThrow(
       /without a Location/i,
     );
+  });
+});
+
+describe('offset continuation', () => {
+  // 3000 whitespace-free chars so extraction returns the body verbatim.
+  const longPage = `<!doctype html><html><head><title>Long</title></head><body><article><p>${'abcdefghij'.repeat(300)}</p></article></body></html>`;
+  const longFetch = (): FetchLike =>
+    asFetchLike(async () => new Response(longPage, { status: 200 }));
+
+  it('extracts the fixture at exactly 3000 chars', async () => {
+    const full = await fetchContent(config, 'https://example.test/long', {
+      fetchImpl: longFetch(),
+    });
+    expect(full.truncated).toBe(false);
+    expect(full.content.length).toBe(3000);
+  });
+
+  it('windows a 3000-char page: offset 0/1000/2000 → nextOffset 1000/2000/absent', async () => {
+    const full = await fetchContent(config, 'https://example.test/long', {
+      fetchImpl: longFetch(),
+    });
+
+    const at0 = await fetchContent(config, 'https://example.test/long', {
+      fetchImpl: longFetch(),
+      maxChars: 1000,
+    });
+    expect(at0.nextOffset).toBe(1000);
+    expect(at0.truncated).toBe(true);
+    expect(at0.content.length).toBe(1000);
+    expect(at0.content.startsWith(full.content.slice(0, 100))).toBe(true);
+    expect(at0.content.endsWith('[Content truncated]')).toBe(true);
+
+    const at1000 = await fetchContent(config, 'https://example.test/long', {
+      fetchImpl: longFetch(),
+      maxChars: 1000,
+      offset: 1000,
+    });
+    expect(at1000.nextOffset).toBe(2000);
+    expect(at1000.truncated).toBe(true);
+    expect(at1000.content.startsWith(full.content.slice(1000, 1100))).toBe(true);
+
+    const at2000 = await fetchContent(config, 'https://example.test/long', {
+      fetchImpl: longFetch(),
+      maxChars: 1000,
+      offset: 2000,
+    });
+    expect(at2000.nextOffset).toBeUndefined();
+    expect(at2000.truncated).toBe(false);
+    expect(at2000.content).toBe(full.content.slice(2000));
+  });
+
+  it('returns an empty window with no nextOffset when offset is past the end', async () => {
+    const past = await fetchContent(config, 'https://example.test/long', {
+      fetchImpl: longFetch(),
+      maxChars: 1000,
+      offset: 5000,
+    });
+    expect(past.content).toBe('');
+    expect(past.nextOffset).toBeUndefined();
+    expect(past.truncated).toBe(false);
   });
 });
 
@@ -312,6 +373,22 @@ describe('PDF content', () => {
     expect(result.content).toContain('[Content truncated]');
   });
 
+  it('windows the extracted PDF text via offset and reports nextOffset', async () => {
+    const full = await fetchContent(config, 'https://example.test/doc.pdf', {
+      fetchImpl: pdfFetch(),
+    });
+    const windowed = await fetchContent(config, 'https://example.test/doc.pdf', {
+      fetchImpl: pdfFetch(),
+      maxChars: 30,
+      offset: 5,
+    });
+    // The window is the remainder capped at max_chars; the marker fits inside it.
+    expect(windowed.content).toBe(`${full.content.slice(5, 14)}\n\n[Content truncated]`);
+    expect(windowed.nextOffset).toBe(35);
+    expect(windowed.truncated).toBe(true);
+    expect(windowed.pages).toBe(2);
+  });
+
   it('rejects a PDF body larger than the byte cap', async () => {
     const oversize = new Uint8Array(150_000);
     const fetchImpl = asFetchLike(
@@ -397,5 +474,26 @@ describe('PDF content', () => {
     expect(merged.content).toContain('[Page 1]');
     expect(merged.content).toContain('merged text from unpdf');
     unpdfMock.mode = 'real';
+  });
+});
+
+describe('fetch offset schema', () => {
+  it('allows offset 0 and rejects negative and fractional offsets', () => {
+    expect(fetchInput.safeParse({ url: 'https://x.test' }).success).toBe(true);
+    expect(fetchInput.safeParse({ url: 'https://x.test', offset: 0 }).success).toBe(true);
+    expect(fetchInput.safeParse({ url: 'https://x.test', offset: -1 }).success).toBe(false);
+    expect(fetchInput.safeParse({ url: 'https://x.test', offset: 1.5 }).success).toBe(false);
+  });
+
+  it('keeps nextOffset optional and non-negative in fetchOutput', () => {
+    const base = {
+      url: 'https://x.test',
+      finalUrl: 'https://x.test/',
+      content: 'text',
+      truncated: false,
+    };
+    expect(fetchOutput.safeParse(base).success).toBe(true);
+    expect(fetchOutput.safeParse({ ...base, nextOffset: 0 }).success).toBe(true);
+    expect(fetchOutput.safeParse({ ...base, nextOffset: -1 }).success).toBe(false);
   });
 });
