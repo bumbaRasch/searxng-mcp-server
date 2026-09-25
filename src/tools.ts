@@ -22,8 +22,8 @@ import type { FetchLike } from './http.js';
 import { TOOL_ICONS } from './icon.js';
 import type { LookupAll } from './ssrf.js';
 import { categoryDefinitions } from './categories/index.js';
-import { categoryEnvelopeSchema, categoryInputSchema } from './categories/shared.js';
-import type { CategoryDefinition } from './categories/types.js';
+import { categoryInputSchema } from './categories/shared.js';
+import type { CategoryDeclaration } from './categories/types.js';
 import { imageCategory } from './categories/images.js';
 import { musicCategory } from './categories/music.js';
 import { newsCategory } from './categories/news.js';
@@ -143,19 +143,20 @@ export const handleListEngines = createCategoryHandler(
 export const handleAutocomplete = createCategoryHandler(
   'Autocomplete failed',
   (config, args: AutocompleteInput, deps) =>
-    autocomplete(config, args.query, { fetchImpl: deps.fetchImpl }),
+    autocomplete(config, args.query, { fetchImpl: deps.fetchImpl, cache: deps.cache }),
   formatAutocomplete,
 );
 
-/** Registration only leans on the result shape every category shares. */
+/** Registration only leans on the result shape every category shares;
+ * method bivariance makes every concrete declaration assignable to it. */
 type AnyCategoryResult = { title: string; url: string; content?: string };
 
-function categoryErrorLabel(definition: CategoryDefinition<AnyCategoryResult>): string {
+function categoryErrorLabel(definition: CategoryDeclaration<AnyCategoryResult>): string {
   // The web tool is just "Search failed"; the other headings read naturally.
   return definition.heading === 'Search' ? 'Search failed' : `${definition.heading} search failed`;
 }
 
-function categoryToolHandler(definition: CategoryDefinition<AnyCategoryResult>) {
+function categoryToolHandler(definition: CategoryDeclaration<AnyCategoryResult>) {
   return createCategoryHandler(
     categoryErrorLabel(definition),
     (config: Config, args: CategoryToolInput, deps: ToolDeps) =>
@@ -182,17 +183,14 @@ export const TOOL_NAMES = [
 
 export function registerTools(server: McpServer, config: Config, deps: ToolDeps = {}): void {
   for (const entry of categoryDefinitions) {
-    // Widened once: inference from the registry union is fragile, and both the
-    // handler and the envelope schema only consume the shared result shape.
-    const definition: CategoryDefinition<AnyCategoryResult> = entry;
-    if (definition.tool.name === 'search') {
+    if (entry.tool.name === 'search') {
       // Web search keeps its bespoke slice: user-chosen categories plus the
       // answers/corrections/infoboxes envelope (D1).
       server.registerTool(
-        definition.tool.name,
+        entry.tool.name,
         {
-          title: definition.tool.title,
-          description: withUntrustedSuffix(definition.tool.description),
+          title: entry.tool.title,
+          description: withUntrustedSuffix(entry.tool.description),
           inputSchema: searchInput,
           // Union: the single envelope or the batch wrapper (D6, anyOf per V6).
           outputSchema: searchToolOutput,
@@ -203,16 +201,16 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
       );
       continue;
     }
-    const handler = categoryToolHandler(definition);
+    const handler = categoryToolHandler(entry);
     server.registerTool(
-      definition.tool.name,
+      entry.tool.name,
       {
-        title: definition.tool.title,
-        description: withUntrustedSuffix(definition.tool.description),
+        title: entry.tool.title,
+        description: withUntrustedSuffix(entry.tool.description),
         inputSchema: categoryInputSchema({
-          supportsTimeRange: definition.upstream.supportsTimeRange,
+          supportsTimeRange: entry.upstream.supportsTimeRange,
         }),
-        outputSchema: categoryEnvelopeSchema(definition.resultSchema),
+        outputSchema: entry.envelopeSchema,
         annotations: TOOL_ANNOTATIONS,
         icons: TOOL_ICONS,
       },

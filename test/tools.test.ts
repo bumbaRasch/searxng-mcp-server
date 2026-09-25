@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { describe, expect, it } from 'vitest';
 import { autocompleteInput, autocompleteOutput } from '../src/autocompleter.js';
+import { TtlCache } from '../src/cache.js';
 import type { FetchLike } from '../src/http.js';
 import type { LookupAll } from '../src/ssrf.js';
 import {
@@ -484,6 +485,20 @@ describe('registerTools', () => {
     }
   });
 
+  it('registers the registry-generated envelope schema as the tool output schema', () => {
+    const registered: { name: string; config: { outputSchema?: unknown } }[] = [];
+    const fakeServer = {
+      registerTool: (name: string, toolConfig: { outputSchema?: unknown }) => {
+        registered.push({ name, config: toolConfig });
+      },
+    } as unknown as McpServer;
+    registerTools(fakeServer, config);
+    const image = registered.find((tool) => tool.name === 'image_search');
+    expect(image?.config.outputSchema).toBe(imageSearchOutput);
+    const paper = registered.find((tool) => tool.name === 'paper_search');
+    expect(paper?.config.outputSchema).toBeDefined();
+  });
+
   const disabledFetch = asFetchLike(async () => {
     throw new Error('network disabled in unit tests');
   });
@@ -612,6 +627,19 @@ describe('handleAutocomplete', () => {
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toMatch(/403/);
     expect(result.content[0]?.text).not.toContain('\n');
+  });
+
+  it('threads deps.cache through to the autocompleter client', async () => {
+    let calls = 0;
+    const fetchImpl = asFetchLike(async () => {
+      calls += 1;
+      return jsonResponse(['sears']);
+    });
+    const cache = new TtlCache<unknown>(128, 60_000);
+    const args = autocompleteInput.parse({ query: 'sear' });
+    await handleAutocomplete(config, args, { fetchImpl, cache });
+    await handleAutocomplete(config, args, { fetchImpl, cache });
+    expect(calls).toBe(1);
   });
 
   it('registers with the documented title and an instance-language description', () => {
