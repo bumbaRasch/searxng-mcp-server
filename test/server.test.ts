@@ -208,6 +208,7 @@ describe('every tool answers over transport', () => {
     video_search: { query: 'q' },
     music_search: { query: 'q' },
     autocomplete: { query: 'q' },
+    paper_search: { query: 'q' },
     list_engines: {},
   };
 
