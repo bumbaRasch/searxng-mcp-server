@@ -129,6 +129,8 @@ export const fetchOutput = z.object({
   byline: z.string().optional(),
   content: z.string(),
   truncated: z.boolean(),
+  // Present only when the fetched resource was a PDF (D4).
+  pages: z.number().int().positive().optional(),
 });
 export type FetchResult = z.infer<typeof fetchOutput>;
 

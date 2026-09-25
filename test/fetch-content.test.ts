@@ -1,10 +1,36 @@
-import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { describe, expect, it, vi } from 'vitest';
 import { fetchContent, FetchError, MAX_REDIRECTS } from '../src/fetch.js';
 import type { FetchLike } from '../src/http.js';
 import type { LookupAll } from '../src/ssrf.js';
 import { asFetchLike, HTML_PAGE, makeConfig } from './helpers.js';
 
+// Flag-gated unpdf mock: 'real' passes through; the other modes force the
+// defensive paths in src/pdf.ts that a healthy PDF never exercises.
+const unpdfMock = vi.hoisted(() => ({ mode: 'real' }));
+vi.mock('unpdf', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('unpdf')>();
+  return {
+    ...actual,
+    getMeta: ((pdf: Parameters<typeof actual.getMeta>[0]) => {
+      if (unpdfMock.mode === 'meta-failure') return Promise.reject(new Error('xref gone'));
+      if (unpdfMock.mode === 'meta-empty') return Promise.resolve({ info: {}, metadata: {} });
+      if (unpdfMock.mode === 'meta-blank')
+        return Promise.resolve({ info: { Title: '   ' }, metadata: {} });
+      return actual.getMeta(pdf);
+    }) as typeof actual.getMeta,
+    extractText: ((pdf: Parameters<typeof actual.extractText>[0]) => {
+      if (unpdfMock.mode === 'merged-text')
+        return Promise.resolve({ totalPages: 2, text: 'merged text from unpdf' });
+      return actual.extractText(pdf, { mergePages: false });
+    }) as typeof actual.extractText,
+  };
+});
+
 const config = makeConfig({ searxngUrl: 'http://localhost:8888' });
+
+/** Two-page fixture with /Title "Sample PDF Fixture" (see test/fixtures). */
+const PDF_BYTES = new Uint8Array(readFileSync(new URL('./fixtures/sample.pdf', import.meta.url)));
 
 describe('fetchContent', () => {
   it('fetches and returns markdown with metadata', async () => {
@@ -249,5 +275,127 @@ describe('DNS rebinding (TOCTOU)', () => {
     }
     expect(messages.join('\n')).toMatch(/blocked private address for rebind\.test: 10\.0\.0\.1/i);
     expect(calls).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('PDF content', () => {
+  function pdfFetch(contentType = 'application/pdf'): FetchLike {
+    return asFetchLike(
+      async () =>
+        new Response(PDF_BYTES, {
+          status: 200,
+          headers: { 'content-type': contentType },
+        }),
+    );
+  }
+
+  it('extracts per-page text, page count and metadata title', async () => {
+    const result = await fetchContent(config, 'https://example.test/doc.pdf', {
+      fetchImpl: pdfFetch(),
+    });
+    expect(result.pages).toBe(2);
+    expect(result.content).toContain('[Page 1]');
+    expect(result.content).toContain('[Page 2]');
+    expect(result.content).toContain('Hello from page one.');
+    expect(result.content).toContain('Second page text.');
+    expect(result.title).toBe('Sample PDF Fixture');
+    expect(result.truncated).toBe(false);
+  });
+
+  it('applies the truncation marker below max_chars', async () => {
+    const result = await fetchContent(config, 'https://example.test/doc.pdf', {
+      fetchImpl: pdfFetch(),
+      maxChars: 40,
+    });
+    expect(result.truncated).toBe(true);
+    expect(result.content).toContain('[Page 1]');
+    expect(result.content).toContain('[Content truncated]');
+  });
+
+  it('rejects a PDF body larger than the byte cap', async () => {
+    const oversize = new Uint8Array(150_000);
+    const fetchImpl = asFetchLike(
+      async () =>
+        new Response(oversize, {
+          status: 200,
+          headers: { 'content-type': 'application/pdf' },
+        }),
+    );
+    await expect(
+      fetchContent(config, 'https://example.test/big.pdf', { fetchImpl }),
+    ).rejects.toThrow(/byte limit/i);
+  });
+
+  it('reports corrupt PDF bytes as a sanitized FetchError, not a crash', async () => {
+    const corrupt = new Uint8Array(Buffer.from('this is definitely not a pdf at all'));
+    const fetchImpl = asFetchLike(
+      async () =>
+        new Response(corrupt, {
+          status: 200,
+          headers: { 'content-type': 'application/pdf' },
+        }),
+    );
+    const error = await fetchContent(config, 'https://example.test/corrupt.pdf', {
+      fetchImpl,
+    }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(FetchError);
+    expect((error as FetchError).name).toBe('FetchError');
+    expect((error as FetchError).message).toMatch(/Failed to parse PDF/i);
+    expect((error as FetchError).message).not.toMatch(/Exception/);
+  });
+
+  it('accepts application/pdf with parameters and rejects prefix over-matches', async () => {
+    const ok = await fetchContent(config, 'https://example.test/doc.pdf', {
+      fetchImpl: pdfFetch('application/pdf;x=1'),
+    });
+    expect(ok.pages).toBe(2);
+    const fetchImpl = asFetchLike(
+      async () =>
+        new Response('x', { status: 200, headers: { 'content-type': 'application/pdfx' } }),
+    );
+    await expect(
+      fetchContent(config, 'https://example.test/doc.pdfx', { fetchImpl }),
+    ).rejects.toThrow(/Content-Type/i);
+  });
+
+  it('rejects PDF responses without a readable body stream', async () => {
+    const bodyless = {
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/pdf' }),
+      body: null,
+      text: async () => '',
+    };
+    const fetchImpl = asFetchLike(async () => bodyless);
+    await expect(
+      fetchContent(config, 'https://example.test/empty.pdf', { fetchImpl }),
+    ).rejects.toThrow(/no readable body/i);
+  });
+
+  it('tolerates metadata failures, blank titles and merged text defensively', async () => {
+    unpdfMock.mode = 'meta-failure';
+    const metaFailed = await fetchContent(config, 'https://example.test/doc.pdf', {
+      fetchImpl: pdfFetch(),
+    });
+    expect(metaFailed.pages).toBe(2);
+    expect(metaFailed.title).toBeUndefined();
+
+    unpdfMock.mode = 'meta-empty';
+    expect(
+      (await fetchContent(config, 'https://example.test/doc.pdf', { fetchImpl: pdfFetch() })).title,
+    ).toBeUndefined();
+    unpdfMock.mode = 'meta-blank';
+    expect(
+      (await fetchContent(config, 'https://example.test/doc.pdf', { fetchImpl: pdfFetch() })).title,
+    ).toBeUndefined();
+
+    unpdfMock.mode = 'merged-text';
+    const merged = await fetchContent(config, 'https://example.test/doc.pdf', {
+      fetchImpl: pdfFetch(),
+    });
+    expect(merged.pages).toBe(2);
+    expect(merged.content).toContain('[Page 1]');
+    expect(merged.content).toContain('merged text from unpdf');
+    unpdfMock.mode = 'real';
   });
 });
