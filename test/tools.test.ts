@@ -1,5 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { describe, expect, it } from 'vitest';
+import { autocompleteInput, autocompleteOutput } from '../src/autocompleter.js';
 import type { FetchLike } from '../src/http.js';
 import type { LookupAll } from '../src/ssrf.js';
 import {
@@ -18,6 +19,7 @@ import {
   videoSearchOutput,
 } from '../src/schemas.js';
 import {
+  handleAutocomplete,
   handleFetch,
   handleImageSearch,
   handleListEngines,
@@ -584,5 +586,44 @@ describe('handleListEngines', () => {
     const result = await handleListEngines(config, {}, { fetchImpl });
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toMatch(/Could not reach SearXNG/);
+  });
+});
+
+describe('handleAutocomplete', () => {
+  it('returns suggestions inside the wrapper with schema-valid structured content', async () => {
+    const result = await handleAutocomplete(config, autocompleteInput.parse({ query: 'sear' }), {
+      fetchImpl: asFetchLike(async () => jsonResponse(['sears', 'search', 42])),
+    });
+    expect(result.isError).toBeUndefined();
+    const text = result.content[0]?.text ?? '';
+    expect(text).toContain('# Query suggestions for "sear"');
+    const open = text.indexOf('<<<UNTRUSTED_WEB_CONTENT');
+    const close = text.indexOf('UNTRUSTED_WEB_CONTENT>>>');
+    expect(open).toBeGreaterThan(-1);
+    expect(text.indexOf('- sears')).toBeGreaterThan(open);
+    expect(text.indexOf('- search')).toBeLessThan(close);
+    expect(autocompleteOutput.safeParse(result.structuredContent).success).toBe(true);
+  });
+
+  it('returns sanitized isError when the autocompleter is blocked', async () => {
+    const result = await handleAutocomplete(config, autocompleteInput.parse({ query: 'q' }), {
+      fetchImpl: asFetchLike(async () => new Response('forbidden', { status: 403 })),
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/403/);
+    expect(result.content[0]?.text).not.toContain('\n');
+  });
+
+  it('registers with the documented title and an instance-language description', () => {
+    const registered = new Map<string, { title?: string; description?: string }>();
+    const fakeServer = {
+      registerTool: (name: string, toolConfig: { title?: string; description?: string }) => {
+        registered.set(name, toolConfig);
+      },
+    } as unknown as McpServer;
+    registerTools(fakeServer, config);
+    const tool = registered.get('autocomplete');
+    expect(tool?.title).toBe('Query suggestions (SearXNG)');
+    expect(tool?.description).toMatch(/language configured on the instance/);
   });
 });

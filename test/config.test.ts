@@ -267,3 +267,70 @@ describe('assertHttpBindSafety (effective transport)', () => {
     expect(() => assertHttpBindSafety('stdio', { ...makeConfig(), host: '0.0.0.0' })).not.toThrow();
   });
 });
+
+describe('SEARXNG_URLS / SEARXNG_CACHE_TTL_MS (B6)', () => {
+  it('defaults to a primary-only instance list and caching off', () => {
+    const cfg = loadConfig({}, '0.0.0');
+    expect(cfg.searxngUrls).toEqual(['http://localhost:8888']);
+    expect(cfg.cacheTtlMs).toBe(0);
+  });
+
+  it('extends SEARXNG_URL with SEARXNG_URLS entries; the primary stays first', () => {
+    const cfg = loadConfig(
+      {
+        SEARXNG_URL: 'http://a.test:8888/',
+        SEARXNG_URLS: ' http://b.test:8888 , http://c.test:8888/searxng///',
+      },
+      '0.0.0',
+    );
+    expect(cfg.searxngUrl).toBe('http://a.test:8888');
+    expect(cfg.searxngUrls).toEqual([
+      'http://a.test:8888',
+      'http://b.test:8888',
+      'http://c.test:8888/searxng',
+    ]);
+  });
+
+  it('warns and skips invalid entries and strips embedded credentials', () => {
+    const warnings: string[] = [];
+    const cfg = loadConfig(
+      {
+        SEARXNG_URL: 'http://a.test',
+        SEARXNG_URLS: 'ftp://bad.test, http://u:sekret@b.test, not a url ,,http://a.test',
+      },
+      '0.0.0',
+      (message) => warnings.push(message),
+    );
+    expect(cfg.searxngUrls).toEqual(['http://a.test', 'http://b.test']);
+    expect(warnings.filter((warning) => warning.includes('SEARXNG_URLS'))).toHaveLength(2);
+    expect(warnings.join('\n')).toContain('only http/https are supported');
+    expect(warnings.join('\n')).toContain('not a valid URL');
+    expect(warnings.join('\n')).not.toContain('sekret');
+  });
+
+  it('drops duplicate instances (primary repeats and list repeats)', () => {
+    const cfg = loadConfig(
+      { SEARXNG_URL: 'http://a.test', SEARXNG_URLS: 'http://a.test/,http://b.test,http://b.test' },
+      '0.0.0',
+    );
+    expect(cfg.searxngUrls).toEqual(['http://a.test', 'http://b.test']);
+  });
+
+  it('ignores a blank SEARXNG_URLS without warnings', () => {
+    const warnings: string[] = [];
+    const cfg = loadConfig({ SEARXNG_URLS: '  ' }, '0.0.0', (message) => warnings.push(message));
+    expect(cfg.searxngUrls).toEqual(['http://localhost:8888']);
+    expect(warnings).toHaveLength(0);
+  });
+
+  it('parses SEARXNG_CACHE_TTL_MS and falls back to 0 on invalid values', () => {
+    expect(loadConfig({ SEARXNG_CACHE_TTL_MS: '250' }, '0.0.0').cacheTtlMs).toBe(250);
+    expect(loadConfig({ SEARXNG_CACHE_TTL_MS: '0' }, '0.0.0').cacheTtlMs).toBe(0);
+    const warnings: string[] = [];
+    const cfg = loadConfig({ SEARXNG_CACHE_TTL_MS: '-5' }, '0.0.0', (message) =>
+      warnings.push(message),
+    );
+    expect(cfg.cacheTtlMs).toBe(0);
+    expect(warnings.join('\n')).toMatch(/SEARXNG_CACHE_TTL_MS/);
+  });
+});

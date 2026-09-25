@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { request as httpRequest } from 'node:http';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import type { Config } from '../src/config.js';
 import { startHttpServer, staticTokenVerifier, type HttpServerHandle } from '../src/http-server.js';
@@ -140,6 +141,73 @@ describe('startHttpServer (modern Streamable HTTP)', () => {
     } finally {
       await client.close();
     }
+  });
+});
+
+// undici's fetch silently rewrites the Host header, so spoof one over raw http.
+function getWithHostHeader(
+  url: string,
+  hostHeader: string,
+): Promise<{ status: number | undefined; body: string }> {
+  const target = new URL(url);
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(
+      {
+        host: target.hostname,
+        port: target.port,
+        path: target.pathname,
+        headers: { host: hostHeader },
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        res.on('end', () =>
+          resolve({
+            status: res.statusCode,
+            body: Buffer.concat(chunks).toString('utf8'),
+          }),
+        );
+      },
+    );
+    request.on('error', reject);
+    request.end();
+  });
+}
+
+describe('GET /healthz', () => {
+  it('answers 200 ok with json content-type without a token', async () => {
+    const url = await startServer();
+    const response = await fetch(new URL('/healthz', url));
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toMatch(/application\/json/);
+    await expect(response.json()).resolves.toEqual({ status: 'ok' });
+  });
+
+  it('stays open without Authorization when a token is configured', async () => {
+    const url = await startServer({ authToken: 'secret-token' });
+    const response = await fetch(new URL('/healthz', url));
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ status: 'ok' });
+  });
+
+  it('rejects a spoofed Host header with 403', async () => {
+    const url = await startServer();
+    const { status, body } = await getWithHostHeader(new URL('/healthz', url).href, 'evil.example');
+    expect(status).toBe(403);
+    expect(body).toMatch(/Invalid Host/);
+  });
+
+  it('answers 404 below /healthz', async () => {
+    const url = await startServer();
+    const response = await fetch(new URL('/healthz/x', url));
+    expect(response.status).toBe(404);
+  });
+
+  it('tolerates a query string', async () => {
+    const url = await startServer();
+    const response = await fetch(new URL('/healthz?probe=liveness', url));
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ status: 'ok' });
   });
 });
 

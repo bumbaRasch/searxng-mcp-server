@@ -987,3 +987,108 @@ describe('listEngines body limits', () => {
     await expect(listEngines(config, { fetchImpl })).rejects.toThrow(/byte limit/);
   });
 });
+
+describe('instance failover (B6)', () => {
+  const params = { query: 'q', maxResults: 5 };
+  const failoverConfig = makeConfig({
+    searxngUrls: ['http://searx.test:8888', 'http://backup.test:8888'],
+  });
+
+  it('fails over to the next instance on 403', async () => {
+    const seen: string[] = [];
+    const fetchImpl = asFetchLike(async (url: string) => {
+      seen.push(url);
+      if (url.startsWith('http://searx.test:8888'))
+        return new Response('forbidden', { status: 403 });
+      return jsonResponse({
+        query: 'q',
+        results: [{ title: 'B', url: 'https://b.test', content: 'c' }],
+      });
+    });
+    const res = await search(failoverConfig, params, { fetchImpl });
+    expect(seen).toEqual([
+      'http://searx.test:8888/search?q=q&format=json',
+      'http://backup.test:8888/search?q=q&format=json',
+    ]);
+    expect(res.results[0]?.title).toBe('B');
+  });
+
+  it('does not fail over on 400 (parameter errors fail everywhere)', async () => {
+    const seen: string[] = [];
+    const fetchImpl = asFetchLike(async (url: string) => {
+      seen.push(url);
+      return new Response('bad', { status: 400 });
+    });
+    await expect(search(failoverConfig, params, { fetchImpl })).rejects.toThrow(/parameters/i);
+    expect(seen).toHaveLength(1);
+  });
+
+  it('fails over on 5xx and 429', async () => {
+    for (const status of [500, 503, 429]) {
+      const seen: string[] = [];
+      const fetchImpl = asFetchLike(async (url: string) => {
+        seen.push(url);
+        if (seen.length === 1) return new Response('no', { status });
+        return jsonResponse({ query: 'q', results: [] });
+      });
+      const res = await search(failoverConfig, params, { fetchImpl });
+      expect(seen).toHaveLength(2);
+      expect(res.query).toBe('q');
+    }
+  });
+
+  it('fails over on a timeout', async () => {
+    const seen: string[] = [];
+    const fetchImpl = asFetchLike(async (url: string, init?: RequestInit) => {
+      seen.push(url);
+      if (seen.length === 1) {
+        return new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('This operation was aborted', 'AbortError')),
+          );
+        });
+      }
+      return jsonResponse({ query: 'q', results: [] });
+    });
+    const res = await search({ ...failoverConfig, searxngTimeoutMs: 10 }, params, { fetchImpl });
+    expect(seen).toHaveLength(2);
+    expect(res.query).toBe('q');
+  });
+
+  it('exhaustion surfaces the last instance error with its taxonomy', async () => {
+    const fetchImpl = asFetchLike(async () => {
+      throw new Error('ECONNREFUSED');
+    });
+    await expect(search(failoverConfig, params, { fetchImpl })).rejects.toThrow(
+      /http:\/\/backup\.test:8888/,
+    );
+    await expect(search(failoverConfig, params, { fetchImpl })).rejects.toBeInstanceOf(
+      SearxngError,
+    );
+  });
+
+  it('does not fail over on redirects or non-JSON bodies', async () => {
+    const redirect = asFetchLike(
+      async () => new Response(null, { status: 302, headers: { location: 'http://x.test/' } }),
+    );
+    await expect(search(failoverConfig, params, { fetchImpl: redirect })).rejects.toThrow(
+      /redirect/i,
+    );
+    const html = asFetchLike(async () => new Response('<html>nope</html>', { status: 200 }));
+    await expect(search(failoverConfig, params, { fetchImpl: html })).rejects.toThrow(/non-JSON/i);
+  });
+
+  it('fails over /config for list_engines', async () => {
+    const seen: string[] = [];
+    const fetchImpl = asFetchLike(async (url: string) => {
+      seen.push(url);
+      if (url.startsWith('http://searx.test:8888')) return new Response('no', { status: 403 });
+      return jsonResponse({
+        engines: { w: { name: 'wikipedia', enabled: true, categories: ['general'] } },
+      });
+    });
+    const res = await listEngines(failoverConfig, { fetchImpl });
+    expect(seen).toEqual(['http://searx.test:8888/config', 'http://backup.test:8888/config']);
+    expect(res.engines[0]?.name).toBe('wikipedia');
+  });
+});

@@ -1,4 +1,12 @@
 import type { McpServer } from '@modelcontextprotocol/server';
+import {
+  autocomplete,
+  autocompleteInput,
+  autocompleteOutput,
+  formatAutocomplete,
+  type AutocompleteInput,
+} from './autocompleter.js';
+import type { TtlCache } from './cache.js';
 import type { Config } from './config.js';
 import { fetchContent } from './fetch.js';
 import {
@@ -49,6 +57,8 @@ type ToolResult<T = unknown> = {
 export interface ToolDeps {
   fetchImpl?: FetchLike;
   lookup?: LookupAll;
+  /** Opt-in D9 response cache for instance-bound GETs; config-driven via createServer. */
+  cache?: TtlCache<unknown> | undefined;
 }
 
 const UNTRUSTED_SUFFIX =
@@ -88,7 +98,7 @@ export const handleSearch = createCategoryHandler<
 >(
   'Search failed',
   (config, args, deps) => {
-    const opts = { fetchImpl: deps.fetchImpl };
+    const opts = { fetchImpl: deps.fetchImpl, cache: deps.cache };
     return args.queries !== undefined
       ? searchBatch(config, args.queries, toSearchParams(args), opts)
       : search(config, toSearchParams(args), opts);
@@ -107,6 +117,7 @@ export async function handleFetch(
   try {
     const result = await fetchContent(config, args.url, {
       maxChars: args.max_chars,
+      offset: args.offset,
       timeoutMs: args.timeout_ms,
       fetchImpl: deps.fetchImpl,
       lookup: deps.lookup,
@@ -124,8 +135,16 @@ export async function handleFetch(
 
 export const handleListEngines = createCategoryHandler(
   'List engines failed',
-  (config, _args: ListEnginesInput, deps) => listEngines(config, { fetchImpl: deps.fetchImpl }),
+  (config, _args: ListEnginesInput, deps) =>
+    listEngines(config, { fetchImpl: deps.fetchImpl, cache: deps.cache }),
   formatListEngines,
+);
+
+export const handleAutocomplete = createCategoryHandler(
+  'Autocomplete failed',
+  (config, args: AutocompleteInput, deps) =>
+    autocomplete(config, args.query, { fetchImpl: deps.fetchImpl }),
+  formatAutocomplete,
 );
 
 /** Registration only leans on the result shape every category shares. */
@@ -142,6 +161,7 @@ function categoryToolHandler(definition: CategoryDefinition<AnyCategoryResult>) 
     (config: Config, args: CategoryToolInput, deps: ToolDeps) =>
       runCategorySearch(definition, config, toCategorySearchParams(args, definition.upstream), {
         fetchImpl: deps.fetchImpl,
+        cache: deps.cache,
       }),
     (response, args) => formatCategoryResults(definition, response, args.detail),
   );
@@ -152,15 +172,19 @@ export const handleNewsSearch = categoryToolHandler(newsCategory);
 export const handleVideoSearch = categoryToolHandler(videoCategory);
 export const handleMusicSearch = categoryToolHandler(musicCategory);
 
-/** Registration order: registry categories first, then the two bespoke tools. */
+/** Registration order: registry categories first, then the bespoke tools. */
 export const TOOL_NAMES = [
   ...categoryDefinitions.map((definition) => definition.tool.name),
   'fetch_content',
+  'autocomplete',
   'list_engines',
 ] as const;
 
 export function registerTools(server: McpServer, config: Config, deps: ToolDeps = {}): void {
-  for (const definition of categoryDefinitions) {
+  for (const entry of categoryDefinitions) {
+    // Widened once: inference from the registry union is fragile, and both the
+    // handler and the envelope schema only consume the shared result shape.
+    const definition: CategoryDefinition<AnyCategoryResult> = entry;
     if (definition.tool.name === 'search') {
       // Web search keeps its bespoke slice: user-chosen categories plus the
       // answers/corrections/infoboxes envelope (D1).
@@ -209,6 +233,21 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
       icons: TOOL_ICONS,
     },
     (args) => handleFetch(config, args, deps),
+  );
+
+  server.registerTool(
+    'autocomplete',
+    {
+      title: 'Query suggestions (SearXNG)',
+      description: withUntrustedSuffix(
+        'Get query suggestions for a search prefix from the connected SearXNG instance. Suggestions follow the language configured on the instance. Use it to complete or refine a query before searching.',
+      ),
+      inputSchema: autocompleteInput,
+      outputSchema: autocompleteOutput,
+      annotations: TOOL_ANNOTATIONS,
+      icons: TOOL_ICONS,
+    },
+    (args) => handleAutocomplete(config, args, deps),
   );
 
   server.registerTool(
