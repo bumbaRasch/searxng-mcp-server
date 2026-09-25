@@ -10,11 +10,19 @@ npx -y searxng-mcp-server --transport http            # or CLI flag (overrides e
 
 A single `/mcp` endpoint serves POST (JSON or SSE responses) and GET (SSE). The endpoint speaks the **2026-07-28 MCP protocol revision only** — there is no 2025-era fallback, and clients that only speak older revisions are rejected with an unsupported-protocol-version error. Clients built on MCP TypeScript SDK v2 connect by enabling version negotiation (`versionNegotiation: { mode: 'auto' }`); older clients need an upgrade.
 
+## Liveness probe
+
+`GET /healthz` answers `200 {"status":"ok"}` for compose, Kubernetes and load-balancer probes. It is passive (no SearXNG request, no side effects) and skips the bearer token, but `Host`/`Origin` validation still applies; readiness (is SearXNG actually reachable?) stays the reverse proxy's concern.
+
+```bash
+curl -fsS http://127.0.0.1:3000/healthz   # → {"status":"ok"}
+```
+
 ## Security model
 
 - **Loopback by default**: binds `127.0.0.1` (`HOST` to change, `PORT` for the port).
 - **No unauthenticated remote exposure**: startup is refused if `HOST` is anything other than `localhost`/`127.0.0.1`/`::1` without `SEARXNG_AUTH_TOKEN` set.
-- **Bearer auth**: with `SEARXNG_AUTH_TOKEN` set, every request must carry `Authorization: Bearer <token>` (timing-safe comparison, token never logged). Configure clients to send it — SDK v2 clients do this with `authProvider: { token: async () => '…' }`.
+- **Bearer auth**: with `SEARXNG_AUTH_TOKEN` set, every `/mcp` request must carry `Authorization: Bearer <token>` (timing-safe comparison, token never logged). Configure clients to send it — SDK v2 clients do this with `authProvider: { token: async () => '…' }`. The `/healthz` probe needs no token.
 - **DNS-rebinding protection**: the `Host` and `Origin` headers of every request are validated (localhost allowlist by default; extend with `SEARXNG_ALLOWED_HOSTS` / `SEARXNG_ALLOWED_ORIGINS` for public hostnames behind a reverse proxy). Disallowed origins get `403`.
 - **Stateless serving**: one fresh server instance per request, no session state — safe to run multiple replicas behind a load balancer.
 - **TLS**: the server does not terminate TLS. For remote use, put a reverse proxy with a real certificate in front.
