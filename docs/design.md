@@ -2,15 +2,23 @@
 
 `searxng-mcp-server` is a Model Context Protocol (MCP) server, written in
 TypeScript, that exposes a self-hosted [SearXNG](https://github.com/searxng/searxng)
-instance to MCP clients (OpenCode, Claude, Cursor, …). It provides six tools:
+instance to MCP clients (OpenCode, Claude, Cursor, …). It provides nine tools:
 
-- `search` — query SearXNG and return structured + human-readable results.
-- `fetch_content` — fetch a URL and return clean Markdown for LLM consumption.
-- `image_search` — find images: direct file links, optional thumbnails, resolution
-  and format.
+- `search` — query SearXNG and return structured + human-readable results
+  (a single query or a 2–5 query batch).
+- `image_search` — find images: direct file links, optional thumbnails,
+  resolution, format and file size.
 - `news_search` — find recent news articles with a freshness filter.
-- `video_search` — find videos with previews, duration and a freshness filter.
+- `video_search` — find videos with previews, duration, view counts, embed
+  links and a freshness filter.
 - `music_search` — find music, including direct audio file links when available.
+- `paper_search` — find scientific publications: abstracts, authors,
+  journal/DOI metadata and direct PDF links.
+- `fetch_content` — fetch a URL (HTML page or text PDF) and return clean
+  Markdown for LLM consumption, with offset continuation for long pages.
+- `autocomplete` — query suggestions for a prefix (`/autocompleter`).
+- `list_engines` — the engines and categories enabled on the instance
+  (`/config`).
 
 The server speaks MCP over **stdio** (default) or **Streamable HTTP**
 (opt-in, `SEARXNG_TRANSPORT=http` / `--transport http`); the companion
@@ -55,14 +63,30 @@ only `src/index.ts` differs:
 The server is a thin, stateless adapter. SearXNG aggregates upstream search
 engines; `fetch_content` retrieves and extracts a single page.
 
-Six tools are exposed: `search`, `fetch_content`, `image_search`,
-`news_search`, `video_search`, and `music_search`. The media tools are thin
-category-specialized wrappers over the same SearXNG client
-(`fetchSearchJson` + dedicated projections); they never download media —
-only URL strings (`thumbnailSrc`/`audioSrc` are hooks for future embedded
-previews). Dates pass through `pickPublishedDate` (SearXNG leaks the string
-`'None'` for missing dates) and durations through `normalizeDuration` (numeric
-seconds are normalized to `M:SS`/`H:MM:SS`).
+Nine tools are exposed. The category tools — `search`, `image_search`,
+`news_search`, `video_search`, `music_search`, `paper_search` —
+are generated from a declarative **category registry** (`src/categories/`):
+one `defineCategory` declaration per category — tool metadata, upstream
+categories, a `supportsTimeRange` flag, a result zod schema, a defensive
+projector and per-result markdown lines — from which the input schema
+(shared argument atoms), the output envelope
+(`query`/`results`/`suggestions`/`unresponsiveEngines`), the handler and the
+tool registration are derived. `search` keeps a bespoke slice on top of its
+registry entry (user-chosen categories, answers/corrections/infoboxes, batch
+`queries`, `min_score`); `fetch_content`, `autocomplete` and `list_engines`
+are registered beside the registry loop. The category tools never download
+media — only URL strings (`thumbnailSrc`/`audioSrc`/`iframeSrc` are hooks for
+future embedded previews). Dates pass through `pickPublishedDate` (SearXNG
+leaks the string `'None'` for missing dates) and durations through
+`normalizeDuration` (numeric seconds are normalized to `M:SS`/`H:MM:SS`).
+
+Instance-bound requests (search family, `autocomplete`, `/config`) ride a
+failover client: with `SEARXNG_URLS` set, network errors, timeouts, 5xx, 429
+and 403 move to the next instance in order — never 400, which would fail
+everywhere — and exhaustion surfaces the last error. An opt-in TTL cache
+(`SEARXNG_CACHE_TTL_MS`, default off; in-memory LRU of 128) fronts the same
+GETs. `fetch_content` uses neither: its targets are arbitrary web URLs, not
+the operator's instances.
 
 ## Module layout
 
@@ -70,27 +94,37 @@ seconds are normalized to `M:SS`/`H:MM:SS`).
 | --- | --- |
 | `src/index.ts` | bin entrypoint: transport selection (`--transport` flag > `SEARXNG_TRANSPORT` env), stdio wiring, HTTP listener lifecycle, signal handling |
 | `src/server.ts` | `createServer()` — transport-agnostic server factory |
-| `src/tools.ts` | MCP tool registration + error boundary (sanitizes reflected strings) |
-| `src/schemas.ts` | zod input/output schemas — the single source of truth for data shapes (`z.infer` types used everywhere) + `to*SearchParams` mappers |
-| `src/searxng.ts` | SearXNG HTTP client + defensive response projection |
+| `src/tools.ts` | MCP tool registration (registry loop + bespoke tools) + error boundary (sanitizes reflected strings) |
+| `src/categories/` | category registry: `types.ts` (`CategoryDeclaration` + `defineCategory`), `shared.ts` (argument atoms, envelope builder, projection bounds, marker sanitizers), one file per category, `index.ts` aggregation |
+| `src/schemas.ts` | zod schemas: bespoke tool schemas (search/fetch/list-engines) and convenience handles over the registry-generated category schemas (the atoms live in `categories/shared.ts`); `to*SearchParams` mappers; `z.infer` types used everywhere |
+| `src/searxng.ts` | SearXNG HTTP client: failover wrapper, defensive response projection, batch search, `/config` |
+| `src/autocompleter.ts` | `/autocompleter` client, flat-array suggestion projection and markdown rendering |
 | `src/http.ts` | `FetchLike`/`HttpResponseLike` seams + capped stream reading |
 | `src/ssrf.ts` | IP classification + guarded undici dispatcher (anti-rebind) |
-| `src/fetch.ts` | fetch orchestration: redirect loop + SSRF wiring + pipeline |
+| `src/fetch.ts` | fetch orchestration: redirect loop + SSRF wiring + HTML/PDF extraction pipeline + offset windows |
+| `src/pdf.ts` | PDF branch of `fetch_content`: capped raw-byte reader + unpdf text extraction (`[Page N]` sections) |
 | `src/extract.ts` | Readability extraction, DOM cleaning/absolutization, text stripping |
 | `src/markdown.ts` | turndown HTML→Markdown + output truncation |
 | `src/format.ts` | Markdown rendering + untrusted-content wrapping/sanitization + tool error text |
+| `src/cache.ts` | opt-in TTL + LRU cache for instance-bound GETs (default off) |
 | `src/config.ts` | env parsing + defaults (warns on stderr for invalid values; refuses insecure non-localhost HTTP binds) |
 | `src/argv.ts` | `--transport stdio\|http` CLI flag parsing (throws on typos — explicit intent) |
-| `src/http-server.ts` | Streamable HTTP stack: `createMcpHandler` (modern-only), bearer gate, Host/Origin validation, `node:http` wiring |
+| `src/http-server.ts` | Streamable HTTP stack: `createMcpHandler` (modern-only), bearer gate, Host/Origin validation, passive `/healthz`, `node:http` wiring |
+| `src/icon.ts` | MCP `icons` metadata (self-contained data URIs) for the server and every tool |
 | `src/version.ts` | `VERSION` constant (kept in sync with package.json by a test) |
 
-Dependency direction (per-module, as imported): `config`, `schemas`, `http`,
-`ssrf`, `extract`, `markdown` and `version` are leaves. Above them:
-`format` → `schemas`; `searxng` → `http`/`config`/`schemas`; `fetch` →
-`config`/`ssrf`/`extract`/`markdown`/`http`/`schemas`; `tools` →
-`config`/`fetch`/`format`/`schemas`/`searxng` plus type-only imports of
-`http` (`FetchLike`) and `ssrf` (`LookupAll`), and the MCP SDK; `server` →
-`config`/`tools`/`version` (+ MCP); `http-server` →
+Dependency direction (per-module, as imported): `config`, `http`, `ssrf`,
+`extract`, `markdown`, `version`, `icon`, `cache` and the registry core
+(`categories/types` + `categories/shared`, mutually type-only) are leaves.
+Above them: the category files → `categories/shared`/`types` (paper also
+reuses `general`'s date helper); `schemas` → categories; `format` →
+categories + `schemas`; `searxng` → `cache`/`categories`/`http`/`config`/
+`schemas`; `autocompleter` → `searxng`/`cache`/`format`/`config`;
+`pdf` → `http`; `fetch` → `config`/`ssrf`/`extract`/`markdown`/`pdf`/
+`http`/`schemas`; `tools` → `config`/`fetch`/`format`/`schemas`/`searxng`/
+`autocompleter`/`categories` plus type-only imports of `http` (`FetchLike`),
+`ssrf` (`LookupAll`) and `cache` (`TtlCache`), and the MCP SDK; `server` →
+`config`/`tools`/`cache`/`icon`/`version` (+ MCP); `http-server` →
 `config`/`server`/`tools` (types) (+ MCP server root and the
 `@modelcontextprotocol/node` adapter); `index` → `argv`/`config`/
 `http-server`/`server`/`version` (+ MCP stdio transport). All network seams (`FetchLike`, DNS `lookup`) are
@@ -113,6 +147,10 @@ Hard-to-discover facts encoded in `src/searxng.ts` (verified against
   it is absent from the public API docs; `categories` are validated server-side
   (unknown values dropped); `time_range` is validated in `parse_time_range`.
 - `max_results` has no server-side parameter — the client slices the page.
+- `/autocompleter` is GET-only and reads just `q`; with the
+  `X-Requested-With: XMLHttpRequest` header it returns a flat JSON array of
+  strings, without it an OpenSearch-shaped `[prefix, [results], …]` payload
+  (facts verified against `searx/webapp.py`).
 - 403 usually means `format=json` is not enabled in `search.formats`.
 
 Engine-specific credentials (e.g. the OpenAlex `api_key`, which replaced the
@@ -139,13 +177,16 @@ no API keys.
   all hops; streamed reads capped at `MAX_RESPONSE_BYTES` (applied to
   decompressed bytes); non-textual Content-Types are refused on
   `fetch_content`: the gate allows the `text/*` family, `application/json`,
-  `application/xml`, and any `application/*+xml` type — exact tokens with a
-  parameter boundary, so prefix siblings like `application/xml-dtd` are
-  refused; responses without a Content-Type header are treated as textual;
-  output capped at `MAX_CHARS`; per-call `timeout_ms` bounded to 120 s.
-  Residual risk: HTML parsing (Readability + turndown) runs synchronously on
-  the event loop — a hostile page can stall the server for the parse
-  duration — but the input is bounded by the 5 MiB response cap.
+  `application/xml`, any `application/*+xml` type and `application/pdf`
+  (routed to the unpdf text-extraction branch instead of Readability) —
+  exact tokens with a parameter boundary, so prefix siblings like
+  `application/xml-dtd` are refused; responses without a Content-Type
+  header are treated as textual; output capped at `MAX_CHARS` (an `offset`
+  window may continue it); per-call `timeout_ms` bounded to 120 s.
+  Residual risk: HTML parsing (Readability + turndown) and PDF text
+  extraction run synchronously on the event loop — a hostile document can
+  stall the server for the parse duration — but the input is bounded by the
+  5 MiB response cap.
 - **Prompt-injection mitigation**: all web-derived text is wrapped in an
   untrusted-content banner; embedded close markers *and forged open markers*
   (including zero-width/control-character gaps) are neutralized; meta fields
@@ -165,6 +206,11 @@ no API keys.
 
 ### HTTP transport
 
+- **Liveness probe**: `GET /healthz` answers `200 {"status":"ok"}`
+  unauthenticated and without touching SearXNG — probes must be cheap and
+  side-effect free; readiness (is SearXNG reachable?) is the operator's
+  reverse-proxy concern. Host/Origin validation still applies, and every
+  other path keeps the 404 behavior.
 - **Fail-fast exposure guard**: `loadConfig` *throws* (unlike the
   warn-and-fallback env parsing) when `SEARXNG_TRANSPORT=http` would bind a
   non-localhost `HOST` without `SEARXNG_AUTH_TOKEN` — an unauthenticated
@@ -193,8 +239,26 @@ no API keys.
 
 ## Non-goals
 
-- Site crawling/spidering, JavaScript rendering, hosted search backends or
-  zero-config public SearXNG instances (self-hosted is this project's core
-  privacy stance), replacing SearXNG itself. The deprecated HTTP+SSE
-  transport and 2025-era Streamable HTTP sessions are also out: the HTTP
-  path is modern-only (2026-07-28) by design.
+Deliberate scope cuts, with the reasoning (stable — do not relitigate
+without new evidence):
+
+- **Section/paragraph-range addressing in `fetch_content`** — the `offset`
+  window plus in-content headings cover the read-long-docs scenario without
+  a second addressing scheme.
+- **HTML scraping fallback for JSON-disabled instances** — the bundled
+  compose stack ships a JSON-enabled SearXNG, and instance failover (403
+  moves to the next `SEARXNG_URLS` entry) covers the rest; parsing result
+  HTML would conflict with the security posture.
+- **OAuth for the HTTP transport** — a static bearer token suffices for a
+  self-hosted, single-operator deployment.
+- **Site crawling / `crawl_site`, JavaScript rendering** — out of scope by
+  design; `fetch_content` reads one page.
+- **ML reranking, Ollama synthesis, domain statistics** — dependency weight
+  and philosophy (a thin, stateless adapter over SearXNG).
+- **Random public SearXNG instances** — most disable the JSON API and 429
+  aggressively; self-hosted is this project's core privacy stance.
+- **Per-domain blocklists / learning** — no current need; SearXNG already
+  filters upstream.
+- Hosted search backends, replacing SearXNG itself, the deprecated HTTP+SSE
+  transport and 2025-era Streamable HTTP sessions (the HTTP path is
+  modern-only, 2026-07-28, by design).
