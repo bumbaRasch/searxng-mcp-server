@@ -180,6 +180,9 @@ describe('every tool answers over transport', () => {
         { status: 200 },
       );
     }
+    if (target.includes('/autocompleter?')) {
+      return new Response(JSON.stringify(['q1', 'q2']), { status: 200 });
+    }
     if (target.includes('/search?')) {
       return new Response(
         JSON.stringify({
@@ -204,6 +207,7 @@ describe('every tool answers over transport', () => {
     news_search: { query: 'q' },
     video_search: { query: 'q' },
     music_search: { query: 'q' },
+    autocomplete: { query: 'q' },
     list_engines: {},
   };
 

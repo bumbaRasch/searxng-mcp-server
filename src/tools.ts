@@ -1,4 +1,11 @@
 import type { McpServer } from '@modelcontextprotocol/server';
+import {
+  autocomplete,
+  autocompleteInput,
+  autocompleteOutput,
+  formatAutocomplete,
+  type AutocompleteInput,
+} from './autocompleter.js';
 import type { Config } from './config.js';
 import { fetchContent } from './fetch.js';
 import {
@@ -115,6 +122,13 @@ export const handleListEngines = createCategoryHandler(
   formatListEngines,
 );
 
+export const handleAutocomplete = createCategoryHandler(
+  'Autocomplete failed',
+  (config, args: AutocompleteInput, deps) =>
+    autocomplete(config, args.query, { fetchImpl: deps.fetchImpl }),
+  formatAutocomplete,
+);
+
 /** Registration only leans on the result shape every category shares. */
 type AnyCategoryResult = { title: string };
 
@@ -139,10 +153,11 @@ export const handleNewsSearch = categoryToolHandler(newsCategory);
 export const handleVideoSearch = categoryToolHandler(videoCategory);
 export const handleMusicSearch = categoryToolHandler(musicCategory);
 
-/** Registration order: registry categories first, then the two bespoke tools. */
+/** Registration order: registry categories first, then the bespoke tools. */
 export const TOOL_NAMES = [
   ...categoryDefinitions.map((definition) => definition.tool.name),
   'fetch_content',
+  'autocomplete',
   'list_engines',
 ] as const;
 
@@ -195,6 +210,21 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
       icons: TOOL_ICONS,
     },
     (args) => handleFetch(config, args, deps),
+  );
+
+  server.registerTool(
+    'autocomplete',
+    {
+      title: 'Query suggestions (SearXNG)',
+      description: withUntrustedSuffix(
+        'Get query suggestions for a search prefix from the connected SearXNG instance. Suggestions follow the language configured on the instance. Use it to complete or refine a query before searching.',
+      ),
+      inputSchema: autocompleteInput,
+      outputSchema: autocompleteOutput,
+      annotations: TOOL_ANNOTATIONS,
+      icons: TOOL_ICONS,
+    },
+    (args) => handleAutocomplete(config, args, deps),
   );
 
   server.registerTool(
