@@ -2,57 +2,39 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import type { Config } from './config.js';
 import { fetchContent } from './fetch.js';
 import {
+  formatCategoryResults,
   formatFetchedPage,
-  formatImageResults,
   formatListEngines,
-  formatMusicResults,
-  formatNewsResults,
   formatSearchResults,
-  formatVideoResults,
   sanitizeToolError,
   sanitizeStructured,
 } from './format.js';
 import type { FetchLike } from './http.js';
 import { TOOL_ICONS } from './icon.js';
 import type { LookupAll } from './ssrf.js';
+import { categoryDefinitions } from './categories/index.js';
+import { categoryEnvelopeSchema, categoryInputSchema } from './categories/shared.js';
+import type { CategoryDefinition } from './categories/types.js';
+import { imageCategory } from './categories/images.js';
+import { musicCategory } from './categories/music.js';
+import { newsCategory } from './categories/news.js';
+import { videoCategory } from './categories/videos.js';
 import {
   fetchInput,
   fetchOutput,
-  imageSearchInput,
-  imageSearchOutput,
   listEnginesInput,
   listEnginesOutput,
-  musicSearchInput,
-  musicSearchOutput,
-  newsSearchInput,
-  newsSearchOutput,
   searchInput,
   searchOutput,
-  toImageSearchParams,
-  toMusicSearchParams,
-  toNewsSearchParams,
+  toCategorySearchParams,
   toSearchParams,
-  toVideoSearchParams,
-  videoSearchInput,
-  videoSearchOutput,
+  type CategoryToolInput,
   type FetchInput,
   type FetchResult,
-  type ImageSearchInput,
   type ListEnginesInput,
-  type MusicSearchInput,
-  type NewsSearchInput,
   type SearchInput,
-  type VideoSearchInput,
 } from './schemas.js';
-import {
-  listEngines,
-  SearxngError,
-  imageSearch,
-  musicSearch,
-  newsSearch,
-  search,
-  videoSearch,
-} from './searxng.js';
+import { listEngines, runCategorySearch, SearxngError, search } from './searxng.js';
 
 type ToolResult<T = unknown> = {
   content: { type: 'text'; text: string }[];
@@ -127,66 +109,78 @@ export async function handleFetch(
   }
 }
 
-export const handleImageSearch = createCategoryHandler(
-  'Image search failed',
-  (config, args: ImageSearchInput, deps) =>
-    imageSearch(config, toImageSearchParams(args), { fetchImpl: deps.fetchImpl }),
-  formatImageResults,
-);
-
-export const handleNewsSearch = createCategoryHandler(
-  'News search failed',
-  (config, args: NewsSearchInput, deps) =>
-    newsSearch(config, toNewsSearchParams(args), { fetchImpl: deps.fetchImpl }),
-  formatNewsResults,
-);
-
-export const handleVideoSearch = createCategoryHandler(
-  'Video search failed',
-  (config, args: VideoSearchInput, deps) =>
-    videoSearch(config, toVideoSearchParams(args), { fetchImpl: deps.fetchImpl }),
-  formatVideoResults,
-);
-
-export const handleMusicSearch = createCategoryHandler(
-  'Music search failed',
-  (config, args: MusicSearchInput, deps) =>
-    musicSearch(config, toMusicSearchParams(args), { fetchImpl: deps.fetchImpl }),
-  formatMusicResults,
-);
-
 export const handleListEngines = createCategoryHandler(
   'List engines failed',
   (config, _args: ListEnginesInput, deps) => listEngines(config, { fetchImpl: deps.fetchImpl }),
   formatListEngines,
 );
 
-/** Single source of truth for the tool name list (tests, e2e, registration). */
+/** Registration only leans on the result shape every category shares. */
+type AnyCategoryResult = { title: string };
+
+function categoryErrorLabel(definition: CategoryDefinition<AnyCategoryResult>): string {
+  // The web tool is just "Search failed"; the other headings read naturally.
+  return definition.heading === 'Search' ? 'Search failed' : `${definition.heading} search failed`;
+}
+
+function categoryToolHandler(definition: CategoryDefinition<AnyCategoryResult>) {
+  return createCategoryHandler(
+    categoryErrorLabel(definition),
+    (config: Config, args: CategoryToolInput, deps: ToolDeps) =>
+      runCategorySearch(definition, config, toCategorySearchParams(args, definition.upstream), {
+        fetchImpl: deps.fetchImpl,
+      }),
+    (response) => formatCategoryResults(definition, response),
+  );
+}
+
+export const handleImageSearch = categoryToolHandler(imageCategory);
+export const handleNewsSearch = categoryToolHandler(newsCategory);
+export const handleVideoSearch = categoryToolHandler(videoCategory);
+export const handleMusicSearch = categoryToolHandler(musicCategory);
+
+/** Registration order: registry categories first, then the two bespoke tools. */
 export const TOOL_NAMES = [
-  'search',
+  ...categoryDefinitions.map((definition) => definition.tool.name),
   'fetch_content',
-  'image_search',
-  'news_search',
-  'video_search',
-  'music_search',
   'list_engines',
 ] as const;
 
 export function registerTools(server: McpServer, config: Config, deps: ToolDeps = {}): void {
-  server.registerTool(
-    'search',
-    {
-      title: 'Web search (SearXNG)',
-      description: withUntrustedSuffix(
-        'Search the web through the configured SearXNG instance. Returns ranked results with titles, URLs and snippets. For images, news, videos or music, prefer the dedicated *_search tools — they return richer typed fields.',
-      ),
-      inputSchema: searchInput,
-      outputSchema: searchOutput,
-      annotations: TOOL_ANNOTATIONS,
-      icons: TOOL_ICONS,
-    },
-    (args) => handleSearch(config, args, deps),
-  );
+  for (const definition of categoryDefinitions) {
+    if (definition.tool.name === 'search') {
+      // Web search keeps its bespoke slice: user-chosen categories plus the
+      // answers/corrections/infoboxes envelope (D1).
+      server.registerTool(
+        definition.tool.name,
+        {
+          title: definition.tool.title,
+          description: withUntrustedSuffix(definition.tool.description),
+          inputSchema: searchInput,
+          outputSchema: searchOutput,
+          annotations: TOOL_ANNOTATIONS,
+          icons: TOOL_ICONS,
+        },
+        (args) => handleSearch(config, args, deps),
+      );
+      continue;
+    }
+    const handler = categoryToolHandler(definition);
+    server.registerTool(
+      definition.tool.name,
+      {
+        title: definition.tool.title,
+        description: withUntrustedSuffix(definition.tool.description),
+        inputSchema: categoryInputSchema({
+          supportsTimeRange: definition.upstream.supportsTimeRange,
+        }),
+        outputSchema: categoryEnvelopeSchema(definition.resultSchema),
+        annotations: TOOL_ANNOTATIONS,
+        icons: TOOL_ICONS,
+      },
+      (args: CategoryToolInput) => handler(config, args, deps),
+    );
+  }
 
   server.registerTool(
     'fetch_content',
@@ -201,66 +195,6 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
       icons: TOOL_ICONS,
     },
     (args) => handleFetch(config, args, deps),
-  );
-
-  server.registerTool(
-    'image_search',
-    {
-      title: 'Image search (SearXNG)',
-      description: withUntrustedSuffix(
-        'Search the web for images. Returns direct image links, thumbnails, resolution and format.',
-      ),
-      inputSchema: imageSearchInput,
-      outputSchema: imageSearchOutput,
-      annotations: TOOL_ANNOTATIONS,
-      icons: TOOL_ICONS,
-    },
-    (args) => handleImageSearch(config, args, deps),
-  );
-
-  server.registerTool(
-    'news_search',
-    {
-      title: 'News search (SearXNG)',
-      description: withUntrustedSuffix(
-        'Search recent news articles. Supports a time_range freshness filter.',
-      ),
-      inputSchema: newsSearchInput,
-      outputSchema: newsSearchOutput,
-      annotations: TOOL_ANNOTATIONS,
-      icons: TOOL_ICONS,
-    },
-    (args) => handleNewsSearch(config, args, deps),
-  );
-
-  server.registerTool(
-    'video_search',
-    {
-      title: 'Video search (SearXNG)',
-      description: withUntrustedSuffix(
-        'Search the web for videos. Returns page links, preview thumbnails, duration, author and publish date. Supports a time_range freshness filter.',
-      ),
-      inputSchema: videoSearchInput,
-      outputSchema: videoSearchOutput,
-      annotations: TOOL_ANNOTATIONS,
-      icons: TOOL_ICONS,
-    },
-    (args) => handleVideoSearch(config, args, deps),
-  );
-
-  server.registerTool(
-    'music_search',
-    {
-      title: 'Music search (SearXNG)',
-      description: withUntrustedSuffix(
-        'Search the web for music. Returns page links and, when available, direct audio file links (audioSrc).',
-      ),
-      inputSchema: musicSearchInput,
-      outputSchema: musicSearchOutput,
-      annotations: TOOL_ANNOTATIONS,
-      icons: TOOL_ICONS,
-    },
-    (args) => handleMusicSearch(config, args, deps),
   );
 
   server.registerTool(

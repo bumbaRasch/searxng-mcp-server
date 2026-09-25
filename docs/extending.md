@@ -1,31 +1,40 @@
 # Adding a new search tool (category)
 
-Every category tool touches the same vertical slice. Work top to bottom:
+A category is data: one definition file carries the whole tool slice, and the
+registry generates the schemas, params mapping, client path, handler, renderer
+and registration from it.
 
-1. **`src/schemas.ts`** — add `<name>SearchInput` (compose from the shared argument
-   atoms `queryArg`/`enginesArg`/`languageArg`/`pagenoArg`/`safesearchArg`/`maxResultsArg`;
-   add `time_range` from the shared `timeRange` enum only if SearXNG supports
-   `time_range` for the category), `<name>SearchOutput` (build on the
-   query/results/suggestions/unresponsiveEngines envelope), and `to<Name>SearchParams`
-   mapping to `categories=<searxng-category>`.
-2. **`src/searxng.ts`** — add `project<Name>Result` (normalize + truncate; reuse
-   `normalizeDuration`/`pickPublishedDate`/`asStringArray`) and expose
-   `map<Name>Response` via `mapCategoryResponse`. Add a thin client
-   `<name>Search(config, params: SearchParams, opts)`.
-3. **`src/format.ts`** — add `format<Name>Results` on the `renderCategoryResults`
-   skeleton; keep every web-derived string inside the untrusted wrapper or behind
-   `sanitizeMeta`.
-4. **`src/tools.ts`** — build the handler with `createCategoryHandler` (it maps args via
-   `to<Name>SearchParams`), add the `registerTool` block (description via
-   `withUntrustedSuffix`, `TOOL_ANNOTATIONS`), and append the name to `TOOL_NAMES`.
-5. **Tests** — `test/schemas.test.ts` (input/output/mapper), `test/searxng.test.ts`
-   (projector + client), `test/format.test.ts` (renderer exact-match),
-   `test/tools.test.ts` (handler success + error path).
-6. **`scripts/e2e.mjs`** — the `TOOL_NAMES` import covers listing; add a live call
-   only if the bundled SearXNG has engines for the category.
-7. **Docs** — README intro + Tools section and the `docs/design.md` intro (tool
+1. **`src/categories/<name>.ts`** — one `defineCategory` call:
+   - `tool`: `name` (snake_case), `title`, `description` (the untrusted-data
+     suffix and annotations are appended at registration time).
+   - `upstream`: `categories` (the SearXNG categories sent upstream) and
+     `supportsTimeRange` (adds the shared `time_range` input when `true`).
+   - `heading`: the word used in `# <heading> results for ...`.
+   - `resultSchema`: the zod schema of one projected result (part of the
+     query/results/suggestions/unresponsiveEngines envelope, built by
+     `categoryEnvelopeSchema`).
+   - `projectResult`: defensive `raw → Result | undefined` projection —
+     return `undefined` to drop a garbage item without consuming the
+     `max_results` budget; reuse the shared bounds and helpers from
+     `categories/shared.ts` (`truncateText`, `asStringArray`,
+     `pickPublishedDate`, ...).
+   - `renderResultLines`: the per-result markdown lines. They land inside the
+     untrusted wrapper; run every web-derived string through `sanitizeMeta`.
+2. **`src/categories/index.ts`** — export the file and add the definition to
+   `categoryDefinitions`. That is the only edit outside the new file: input and
+   output schema handles live in `src/schemas.ts` (`categoryInputSchema` /
+   `categoryEnvelopeSchema` over the definition), and `registerTools` and
+   `TOOL_NAMES` pick the tool up automatically. If the category needs more than
+   the shared envelope, model it as a bespoke slice next to the loop in
+   `src/tools.ts` (the way `search` keeps its answers/corrections/infoboxes).
+3. **Tests** — `test/categories.test.ts` covers the registry plumbing; add a
+   category file test for projector + renderer lines, a schema test for the
+   generated input/output handles, and a handler success/error test.
+4. **Docs** — README intro + Tools section and the `docs/design.md` intro (tool
    list and the tool-count sentence above the module table); the module table
    itself is invariant.
+5. **`scripts/e2e.mjs`** — the `TOOL_NAMES` import covers listing; add a live
+   call only if the bundled SearXNG has engines for the category.
 
 Definition of done: `pnpm lint && pnpm lint:types && pnpm typecheck && pnpm test`
 and the `registerTools` test (which asserts `TOOL_NAMES` parity) is green.

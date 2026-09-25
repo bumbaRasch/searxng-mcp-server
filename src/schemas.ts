@@ -1,48 +1,36 @@
 import * as z from 'zod/v4';
+import {
+  categoryEnvelopeSchema,
+  categoryInputSchema,
+  enginesArg,
+  languageArg,
+  maxResultsArg,
+  pagenoArg,
+  queryArg,
+  safesearchArg,
+  timeRangeArg,
+} from './categories/shared.js';
+import { generalCategory } from './categories/general.js';
+import { imageCategory } from './categories/images.js';
+import { musicCategory } from './categories/music.js';
+import { newsCategory } from './categories/news.js';
+import { videoCategory } from './categories/videos.js';
 
-// Single source of truth for tool input/output shapes: zod validates the wire data; z.infer types the model.
+export {
+  commonCategoryArgs,
+  DEFAULT_MAX_RESULTS,
+  enginesArg,
+  languageArg,
+  maxResultsArg,
+  pagenoArg,
+  queryArg,
+  responseTail,
+  safesearchArg,
+  timeRangeArg,
+} from './categories/shared.js';
 
-const timeRange = z.enum(['day', 'week', 'month', 'year']);
-
-export const DEFAULT_MAX_RESULTS = 10;
 /** Projection bound for infobox urls; also caps how many are rendered. */
 export const MAX_URLS_PER_INFOBOX = 10;
-
-// Shared argument atoms: every search-like input reuses these, so they cannot drift.
-export const queryArg = z.string().min(1).max(500).describe('The search query.');
-export const enginesArg = z
-  .array(z.string().min(1))
-  .optional()
-  .describe('Restrict to specific SearXNG engines (best-effort).');
-export const languageArg = z.string().min(2).optional().describe('Language code, e.g. "en", "de".');
-export const pagenoArg = z.number().int().min(1).optional().describe('Page number (default 1).');
-export const safesearchArg = z
-  .union([z.literal(0), z.literal(1), z.literal(2)])
-  .optional()
-  .describe('0 = off, 1 = moderate, 2 = strict.');
-export const maxResultsArg = z
-  .number()
-  .int()
-  .min(1)
-  .max(50)
-  .default(DEFAULT_MAX_RESULTS)
-  .describe(`Maximum results to return (default ${DEFAULT_MAX_RESULTS}).`);
-
-export const timeRangeArg = timeRange.optional().describe('Restrict results by time.');
-export const commonCategoryArgs = {
-  query: queryArg,
-  engines: enginesArg,
-  language: languageArg,
-  pageno: pagenoArg,
-  safesearch: safesearchArg,
-  max_results: maxResultsArg,
-};
-
-export const responseTail = {
-  suggestions: z.array(z.string()),
-  // Array of pairs, not z.tuple: tuple compiles to items:false, which some clients reject.
-  unresponsiveEngines: z.array(z.array(z.string()).length(2)),
-};
 
 export const searchInput = z.object({
   query: queryArg,
@@ -59,20 +47,9 @@ export const searchInput = z.object({
 });
 export type SearchInput = z.infer<typeof searchInput>;
 
+// Web search = category envelope plus its bespoke answers/corrections/infoboxes extras (D1).
 export const searchOutput = z.object({
-  query: z.string(),
-  results: z.array(
-    z.object({
-      title: z.string(),
-      url: z.string(),
-      content: z.string(),
-      engine: z.string().optional(),
-      engines: z.array(z.string()).optional(),
-      category: z.string().optional(),
-      score: z.number().optional(),
-      publishedDate: z.string().optional(),
-    }),
-  ),
+  ...categoryEnvelopeSchema(generalCategory.resultSchema).shape,
   answers: z.array(
     z.object({ answer: z.string(), url: z.string().optional(), engine: z.string().optional() }),
   ),
@@ -86,94 +63,43 @@ export const searchOutput = z.object({
       urls: z.array(z.string()).optional(),
     }),
   ),
-  ...responseTail,
 });
 export type SearchResponse = z.infer<typeof searchOutput>;
 export type SearchResult = z.infer<(typeof searchOutput.shape)['results']['element']>;
 export type SearchAnswer = z.infer<(typeof searchOutput.shape)['answers']['element']>;
 export type SearchInfobox = z.infer<(typeof searchOutput.shape)['infoboxes']['element']>;
 
-export const imageSearchInput = z.object({ ...commonCategoryArgs });
-export type ImageSearchInput = z.infer<typeof imageSearchInput>;
-
-export const newsSearchInput = z.object({ ...commonCategoryArgs, time_range: timeRangeArg });
-export type NewsSearchInput = z.infer<typeof newsSearchInput>;
-
-export const imageSearchOutput = z.object({
-  query: z.string(),
-  results: z.array(
-    z.object({
-      title: z.string(),
-      url: z.string(),
-      imgSrc: z.string(),
-      thumbnailSrc: z.string().optional(),
-      resolution: z.string().optional(),
-      imgFormat: z.string().optional(),
-      source: z.string().optional(),
-      engines: z.array(z.string()).optional(),
-    }),
-  ),
-  ...responseTail,
+// Media-category schemas are generated from the registry: input from the shared
+// atoms, output from the envelope builder over the category's result schema (D1).
+export const imageSearchInput = categoryInputSchema({
+  supportsTimeRange: imageCategory.upstream.supportsTimeRange,
 });
+export type ImageSearchInput = z.infer<typeof imageSearchInput>;
+export const imageSearchOutput = categoryEnvelopeSchema(imageCategory.resultSchema);
 export type ImageSearchResponse = z.infer<typeof imageSearchOutput>;
 export type ImageSearchResult = z.infer<(typeof imageSearchOutput.shape)['results']['element']>;
 
-export const newsSearchOutput = z.object({
-  query: z.string(),
-  results: z.array(
-    z.object({
-      title: z.string(),
-      url: z.string(),
-      content: z.string(),
-      publishedDate: z.string().optional(),
-      engines: z.array(z.string()).optional(),
-    }),
-  ),
-  ...responseTail,
+export const newsSearchInput = categoryInputSchema({
+  supportsTimeRange: newsCategory.upstream.supportsTimeRange,
 });
+export type NewsSearchInput = z.infer<typeof newsSearchInput>;
+export const newsSearchOutput = categoryEnvelopeSchema(newsCategory.resultSchema);
 export type NewsSearchResponse = z.infer<typeof newsSearchOutput>;
 export type NewsSearchResult = z.infer<(typeof newsSearchOutput.shape)['results']['element']>;
 
-export const videoSearchInput = z.object({ ...commonCategoryArgs, time_range: timeRangeArg });
-export type VideoSearchInput = z.infer<typeof videoSearchInput>;
-
-export const musicSearchInput = z.object({ ...commonCategoryArgs });
-export type MusicSearchInput = z.infer<typeof musicSearchInput>;
-
-export const videoSearchOutput = z.object({
-  query: z.string(),
-  results: z.array(
-    z.object({
-      title: z.string(),
-      url: z.string(),
-      thumbnailSrc: z.string().optional(),
-      length: z.string().optional(),
-      author: z.string().optional(),
-      publishedDate: z.string().optional(),
-      engines: z.array(z.string()).optional(),
-    }),
-  ),
-  ...responseTail,
+export const videoSearchInput = categoryInputSchema({
+  supportsTimeRange: videoCategory.upstream.supportsTimeRange,
 });
+export type VideoSearchInput = z.infer<typeof videoSearchInput>;
+export const videoSearchOutput = categoryEnvelopeSchema(videoCategory.resultSchema);
 export type VideoSearchResponse = z.infer<typeof videoSearchOutput>;
 export type VideoSearchResult = z.infer<(typeof videoSearchOutput.shape)['results']['element']>;
 
-export const musicSearchOutput = z.object({
-  query: z.string(),
-  results: z.array(
-    z.object({
-      title: z.string(),
-      url: z.string(),
-      audioSrc: z.string().optional(),
-      thumbnailSrc: z.string().optional(),
-      length: z.string().optional(),
-      author: z.string().optional(),
-      publishedDate: z.string().optional(),
-      engines: z.array(z.string()).optional(),
-    }),
-  ),
-  ...responseTail,
+export const musicSearchInput = categoryInputSchema({
+  supportsTimeRange: musicCategory.upstream.supportsTimeRange,
 });
+export type MusicSearchInput = z.infer<typeof musicSearchInput>;
+export const musicSearchOutput = categoryEnvelopeSchema(musicCategory.resultSchema);
 export type MusicSearchResponse = z.infer<typeof musicSearchOutput>;
 export type MusicSearchResult = z.infer<(typeof musicSearchOutput.shape)['results']['element']>;
 
@@ -207,7 +133,7 @@ export const fetchOutput = z.object({
 export type FetchResult = z.infer<typeof fetchOutput>;
 
 /** Internal search parameters: tool args (snake_case) mapped to camelCase. */
-type TimeRange = z.infer<typeof timeRange>;
+type TimeRange = NonNullable<z.infer<typeof timeRangeArg>>;
 type Safesearch = NonNullable<z.infer<(typeof searchInput.shape)['safesearch']>>;
 
 export interface SearchParams {
@@ -221,16 +147,18 @@ export interface SearchParams {
   maxResults: number;
 }
 
-interface CommonSearchArgs {
+/** Tool arguments shared by every category tool, time_range included when supported. */
+export interface CategoryToolInput {
   query: string;
   engines?: string[] | undefined;
   language?: string | undefined;
   pageno?: number | undefined;
   safesearch?: Safesearch | undefined;
   max_results: number;
+  time_range?: TimeRange | undefined;
 }
 
-function mapCommonParams(input: CommonSearchArgs): SearchParams {
+function mapCommonParams(input: CategoryToolInput): SearchParams {
   return {
     query: input.query,
     engines: input.engines,
@@ -250,20 +178,32 @@ export function toSearchParams(input: SearchInput): SearchParams {
   };
 }
 
+/** Registry-driven mapping: a category tool pins its upstream categories (D1). */
+export function toCategorySearchParams(
+  input: CategoryToolInput,
+  upstream: { categories: string[] },
+): SearchParams {
+  return {
+    ...mapCommonParams(input),
+    categories: upstream.categories,
+    timeRange: input.time_range,
+  };
+}
+
 export function toImageSearchParams(input: ImageSearchInput): SearchParams {
-  return { ...mapCommonParams(input), categories: ['images'] };
+  return toCategorySearchParams(input, imageCategory.upstream);
 }
 
 export function toNewsSearchParams(input: NewsSearchInput): SearchParams {
-  return { ...mapCommonParams(input), categories: ['news'], timeRange: input.time_range };
+  return toCategorySearchParams(input, newsCategory.upstream);
 }
 
 export function toVideoSearchParams(input: VideoSearchInput): SearchParams {
-  return { ...mapCommonParams(input), categories: ['videos'], timeRange: input.time_range };
+  return toCategorySearchParams(input, videoCategory.upstream);
 }
 
 export function toMusicSearchParams(input: MusicSearchInput): SearchParams {
-  return { ...mapCommonParams(input), categories: ['music'] };
+  return toCategorySearchParams(input, musicCategory.upstream);
 }
 
 export const listEnginesInput = z.object({});
