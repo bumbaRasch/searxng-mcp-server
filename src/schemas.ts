@@ -9,18 +9,18 @@ export const DEFAULT_MAX_RESULTS = 10;
 export const MAX_URLS_PER_INFOBOX = 10;
 
 // Shared argument atoms: every search-like input reuses these, so they cannot drift.
-const queryArg = z.string().min(1).max(500).describe('The search query.');
-const enginesArg = z
+export const queryArg = z.string().min(1).max(500).describe('The search query.');
+export const enginesArg = z
   .array(z.string().min(1))
   .optional()
   .describe('Restrict to specific SearXNG engines (best-effort).');
-const languageArg = z.string().min(2).optional().describe('Language code, e.g. "en", "de".');
-const pagenoArg = z.number().int().min(1).optional().describe('Page number (default 1).');
-const safesearchArg = z
+export const languageArg = z.string().min(2).optional().describe('Language code, e.g. "en", "de".');
+export const pagenoArg = z.number().int().min(1).optional().describe('Page number (default 1).');
+export const safesearchArg = z
   .union([z.literal(0), z.literal(1), z.literal(2)])
   .optional()
   .describe('0 = off, 1 = moderate, 2 = strict.');
-const maxResultsArg = z
+export const maxResultsArg = z
   .number()
   .int()
   .min(1)
@@ -28,8 +28,8 @@ const maxResultsArg = z
   .default(DEFAULT_MAX_RESULTS)
   .describe(`Maximum results to return (default ${DEFAULT_MAX_RESULTS}).`);
 
-const timeRangeArg = timeRange.optional().describe('Restrict results by time.');
-const commonCategoryArgs = {
+export const timeRangeArg = timeRange.optional().describe('Restrict results by time.');
+export const commonCategoryArgs = {
   query: queryArg,
   engines: enginesArg,
   language: languageArg,
@@ -38,7 +38,7 @@ const commonCategoryArgs = {
   max_results: maxResultsArg,
 };
 
-const responseTail = {
+export const responseTail = {
   suggestions: z.array(z.string()),
   // Array of pairs, not z.tuple: tuple compiles to items:false, which some clients reject.
   unresponsiveEngines: z.array(z.array(z.string()).length(2)),
