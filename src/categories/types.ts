@@ -1,4 +1,5 @@
 import type * as z from 'zod/v4';
+import { categoryEnvelopeSchema } from './shared.js';
 
 /** Output envelope shared by every category tool: built once (D1). */
 export interface CategoryEnvelope<R> {
@@ -25,7 +26,7 @@ export interface CategoryUpstream<Time extends boolean = boolean> {
  * tool slice (input/output schemas, handler, renderer). `Time` stays literal so
  * schema generation can key off the flag at compile time.
  */
-export interface CategoryDefinition<R, Time extends boolean = boolean> {
+export interface CategoryDeclaration<R, Time extends boolean = boolean> {
   tool: CategoryToolMeta;
   upstream: CategoryUpstream<Time>;
   /** Heading word, e.g. "Image" in "# Image results for ...". */
@@ -37,9 +38,22 @@ export interface CategoryDefinition<R, Time extends boolean = boolean> {
   renderResultLines(this: void, result: R): string[];
 }
 
-/** Pins inference of R from `resultSchema`/`projectResult` at the definition site. */
+/** A registered category: the declaration plus its generated output schema. */
+export interface CategoryDefinition<R, Time extends boolean = boolean> extends CategoryDeclaration<
+  R,
+  Time
+> {
+  /** Output envelope schema over `resultSchema`, computed by `defineCategory`. */
+  envelopeSchema: ReturnType<typeof categoryEnvelopeSchema<R>>;
+}
+
+/** Pins inference of R from `resultSchema`/`projectResult` at the definition
+ * site and derives the envelope schema while R is still precise. */
 export function defineCategory<R, Time extends boolean>(
-  definition: CategoryDefinition<R, Time>,
+  declaration: CategoryDeclaration<R, Time>,
 ): CategoryDefinition<R, Time> {
-  return definition;
+  return {
+    ...declaration,
+    envelopeSchema: categoryEnvelopeSchema(declaration.resultSchema),
+  };
 }

@@ -11,7 +11,7 @@ import {
   MAX_ARRAY_ITEMS,
   MAX_RESULT_CONTENT_CHARS,
 } from './categories/shared.js';
-import type { CategoryDefinition, CategoryEnvelope } from './categories/types.js';
+import type { CategoryDeclaration, CategoryEnvelope } from './categories/types.js';
 import { generalCategory } from './categories/general.js';
 import { imageCategory } from './categories/images.js';
 import { musicCategory } from './categories/music.js';
@@ -306,7 +306,7 @@ export async function searchBatch(
 
 /** One generic client path for every registry category: fetch, project, envelope (D1). */
 export async function runCategorySearch<R>(
-  definition: CategoryDefinition<R>,
+  definition: CategoryDeclaration<R>,
   config: Config,
   params: SearchParams,
   opts: ClientOptions = {},

@@ -485,6 +485,20 @@ describe('registerTools', () => {
     }
   });
 
+  it('registers the registry-generated envelope schema as the tool output schema', () => {
+    const registered: { name: string; config: { outputSchema?: unknown } }[] = [];
+    const fakeServer = {
+      registerTool: (name: string, toolConfig: { outputSchema?: unknown }) => {
+        registered.push({ name, config: toolConfig });
+      },
+    } as unknown as McpServer;
+    registerTools(fakeServer, config);
+    const image = registered.find((tool) => tool.name === 'image_search');
+    expect(image?.config.outputSchema).toBe(imageSearchOutput);
+    const paper = registered.find((tool) => tool.name === 'paper_search');
+    expect(paper?.config.outputSchema).toBeDefined();
+  });
+
   const disabledFetch = asFetchLike(async () => {
     throw new Error('network disabled in unit tests');
   });

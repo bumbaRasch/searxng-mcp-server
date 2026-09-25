@@ -4,6 +4,7 @@ import {
   buildCategoryEnvelope,
   categoryEnvelopeSchema,
   categoryInputSchema,
+  categoryDefinitions,
   defineCategory,
   type CategoryDefinition,
 } from '../src/categories/index.js';
@@ -31,6 +32,42 @@ describe('defineCategory', () => {
     expect(definition.projectResult({ title: 't', url: 'u' })).toEqual({ title: 't', url: 'u' });
     expect(definition.projectResult('garbage')).toBeUndefined();
     expect(definition.renderResultLines({ title: 't', url: 'u' })).toEqual(['t', 'u']);
+  });
+
+  it('derives the envelope schema from the result schema', () => {
+    const definition = defineCategory({
+      tool: { name: 'test_search', title: 'Test search', description: 'Test category.' },
+      upstream: { categories: ['general'], supportsTimeRange: false },
+      heading: 'Test',
+      resultSchema,
+      projectResult: project,
+      renderResultLines: (result) => [result.title, result.url],
+    });
+    const envelope = {
+      query: 'q',
+      results: [{ title: 't', url: 'u' }],
+      suggestions: [],
+      unresponsiveEngines: [],
+    };
+    expect(definition.envelopeSchema.safeParse(envelope).success).toBe(true);
+    expect(
+      definition.envelopeSchema.safeParse({ ...envelope, results: [{ title: 't' }] }).success,
+    ).toBe(false);
+    expect(z.toJSONSchema(definition.envelopeSchema)).toEqual(
+      z.toJSONSchema(categoryEnvelopeSchema(resultSchema)),
+    );
+  });
+});
+
+describe('categoryDefinitions registry', () => {
+  it('equips every registered category with its own envelope schema', () => {
+    expect(categoryDefinitions.length).toBeGreaterThanOrEqual(6);
+    const emptyEnvelope = { query: 'q', results: [], suggestions: [], unresponsiveEngines: [] };
+    const schemas = new Set(categoryDefinitions.map((entry) => entry.envelopeSchema));
+    expect(schemas.size).toBe(categoryDefinitions.length);
+    for (const entry of categoryDefinitions) {
+      expect(entry.envelopeSchema.safeParse(emptyEnvelope).success).toBe(true);
+    }
   });
 });
 

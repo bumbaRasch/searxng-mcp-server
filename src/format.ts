@@ -7,7 +7,7 @@ import {
   UNTRUSTED_CLOSE,
   type DetailLevel,
 } from './categories/shared.js';
-import type { CategoryDefinition, CategoryEnvelope } from './categories/types.js';
+import type { CategoryDeclaration, CategoryEnvelope } from './categories/types.js';
 import { generalCategory } from './categories/general.js';
 import { imageCategory } from './categories/images.js';
 import { musicCategory } from './categories/music.js';
@@ -156,7 +156,7 @@ export function formatFetchedPage(response: FetchResult): string {
 /** Shared category skeleton; per-result lines come from the definition (D1).
  * `detail: 'compact'` swaps them for title + URL + capped snippet. */
 export function formatCategoryResults<R extends { title: string; url: string; content?: string }>(
-  definition: CategoryDefinition<R>,
+  definition: CategoryDeclaration<R>,
   response: Pick<CategoryEnvelope<R>, 'query' | 'results' | 'suggestions'>,
   detail?: DetailLevel,
 ): string {
