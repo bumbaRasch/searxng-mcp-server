@@ -33,7 +33,7 @@ import {
   type MusicSearchResponse,
   type NewsSearchResponse,
   type VideoSearchResponse,
-} from '../src/schemas.js';
+} from '../src/categories/schemas.js';
 import { asFetchLike, jsonResponse, makeConfig } from './helpers.js';
 import type { FetchLike } from '../src/http.js';
 

@@ -1,25 +1,27 @@
 import { describe, expect, it } from 'vitest';
 import * as z from 'zod/v4';
 import {
-  imageSearchInput,
-  imageSearchOutput,
   listEnginesInput,
   listEnginesOutput,
+  searchInput,
+  searchOutput,
+  searchToolOutput,
+  toSearchParams,
+} from '../src/schemas.js';
+import {
+  imageSearchInput,
+  imageSearchOutput,
   musicSearchInput,
   musicSearchOutput,
   newsSearchInput,
   newsSearchOutput,
-  searchInput,
-  searchOutput,
-  searchToolOutput,
   toImageSearchParams,
   toMusicSearchParams,
   toNewsSearchParams,
-  toSearchParams,
   toVideoSearchParams,
   videoSearchInput,
   videoSearchOutput,
-} from '../src/schemas.js';
+} from '../src/categories/schemas.js';
 
 describe('searchInput / toSearchParams', () => {
   it('maps categories and time_range through to search params', () => {
