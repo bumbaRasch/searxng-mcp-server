@@ -15,6 +15,7 @@ import {
   formatListEngines,
   formatSearchBatchResults,
   formatSearchResults,
+  sanitizeMeta,
   sanitizeToolError,
   sanitizeStructured,
 } from './format.js';
@@ -41,6 +42,7 @@ import {
   type FetchInput,
   type FetchResult,
   type ListEnginesInput,
+  type ListEnginesResponse,
   type SearchBatchResponse,
   type SearchInput,
   type SearchResponse,
@@ -135,11 +137,33 @@ export async function handleFetch(
   }
 }
 
+/** D15: the primary instance's listing plus the aggregation summary; the full
+ * per-instance engine lists live in the structured content. */
+export function renderListEngines(response: ListEnginesResponse): string {
+  const base = formatListEngines(response);
+  if (response.instances === undefined) return base;
+  const lines: string[] = [base, '', `## Instances (${response.instances.length})`];
+  for (const instance of response.instances) {
+    if (instance.error !== undefined) {
+      lines.push(`- ${sanitizeMeta(instance.url)}: unavailable — ${instance.error}`);
+      continue;
+    }
+    lines.push(
+      `- ${sanitizeMeta(instance.url)}: ${instance.engines?.length ?? 0} engines, ${instance.unavailableEngines?.length ?? 0} unavailable`,
+    );
+  }
+  const commonEngines = response.commonEngines ?? [];
+  if (commonEngines.length > 0) {
+    lines.push('', `Common engines: ${commonEngines.map(sanitizeMeta).join(', ')}`);
+  }
+  return lines.join('\n');
+}
+
 export const handleListEngines = createCategoryHandler(
   'List engines failed',
   (config, _args: ListEnginesInput, deps) =>
     listEngines(config, { fetchImpl: deps.fetchImpl, cache: deps.cache }),
-  formatListEngines,
+  renderListEngines,
 );
 
 export const handleAutocomplete = createCategoryHandler(
@@ -255,7 +279,7 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
     {
       title: 'SearXNG instance capabilities',
       description: withUntrustedSuffix(
-        'List the engines and categories enabled on the connected SearXNG instance. Use it before searching to pick valid engines or categories.',
+        'List the engines and categories enabled on the connected SearXNG instance. Use it before searching to pick valid engines or categories. With more than one instance configured (SEARXNG_URLS), the output also aggregates across them: instances[] reports each configured URL with its engines and unavailableEngines, or an error when that instance could not be reached, and commonEngines lists the engines enabled on every reachable instance.',
       ),
       inputSchema: listEnginesInput,
       outputSchema: listEnginesOutput,

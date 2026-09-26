@@ -8,6 +8,7 @@ import {
   asStringArray,
   buildCategoryEnvelope,
   isRecord,
+  sanitizeMeta,
   truncateText,
   MAX_ARRAY_ITEMS,
   MAX_RESULT_CONTENT_CHARS,
@@ -476,14 +477,51 @@ function instanceHeaders(config: Config): Record<string, string> {
 
 const MAX_ENGINES = 100;
 
+const CONFIG_REQUEST = {
+  explainStatus: CONFIG_EXPLAIN,
+  explainBadJson: 'SearXNG returned a non-JSON configuration response.',
+};
+
 async function fetchConfigJson(config: Config, opts: ClientOptions = {}): Promise<unknown> {
   return cached(opts.cache, 'GET', `${config.searxngUrl}/config`, () =>
     fetchWithFailover(config, (base) => `${base}/config`, {
+      ...CONFIG_REQUEST,
       fetchImpl: opts.fetchImpl,
-      explainStatus: CONFIG_EXPLAIN,
-      explainBadJson: 'SearXNG returned a non-JSON configuration response.',
     }),
   );
+}
+
+/** One instance's /config with its own timeout — the D15 fan-out unit (no failover:
+ * a dead replica is data, not a retry). */
+async function fetchInstanceConfig(
+  config: Config,
+  base: string,
+  opts: ClientOptions,
+): Promise<unknown> {
+  return cached(opts.cache, 'GET', `${base}/config`, () =>
+    fetchInstanceJson(config, `${base}/config`, { ...CONFIG_REQUEST, fetchImpl: opts.fetchImpl }),
+  );
+}
+
+/** Engine names in a /config body: enabled ones when `selectable`, otherwise the disabled ones. */
+function engineNames(raw: unknown, selectable: boolean): string[] {
+  const source = isRecord(raw) && isRecord(raw.engines) ? raw.engines : {};
+  const names = new Set<string>();
+  for (const engine of Object.values(source)) {
+    if (!isRecord(engine) || typeof engine.name !== 'string' || engine.name.trim() === '') continue;
+    if ((engine.enabled === true) !== selectable) continue;
+    names.add(engine.name);
+  }
+  return [...names].toSorted((a, b) => a.localeCompare(b)).slice(0, MAX_ENGINES);
+}
+
+function instanceEngineView(raw: unknown): { engines: string[]; unavailableEngines: string[] } {
+  return { engines: engineNames(raw, true), unavailableEngines: engineNames(raw, false) };
+}
+
+/** Sanitized message for a failed replica's error entry (D15). */
+export function replicaErrorText(reason: unknown): string {
+  return sanitizeMeta(reason instanceof Error ? reason.message : String(reason));
 }
 
 export function mapEnginesResponse(raw: unknown): ListEnginesResponse {
@@ -509,10 +547,49 @@ export function mapEnginesResponse(raw: unknown): ListEnginesResponse {
   };
 }
 
+/** Single instance: today's behavior, byte-identical. More than one: D15 —
+ * fan /config out over every configured instance and aggregate; a failing
+ * replica becomes an error entry, never a tool failure (all failing does throw). */
 export async function listEngines(
   config: Config,
   opts: ClientOptions = {},
 ): Promise<ListEnginesResponse> {
-  const raw = await fetchConfigJson(config, opts);
-  return mapEnginesResponse(raw);
+  if (config.searxngUrls.length === 1) {
+    return mapEnginesResponse(await fetchConfigJson(config, opts));
+  }
+  const outcomes: ({ url: string; raw: unknown } | { url: string; reason: unknown })[] =
+    await Promise.all(
+      config.searxngUrls.map(async (base) => {
+        try {
+          return { url: base, raw: await fetchInstanceConfig(config, base, opts) };
+        } catch (reason) {
+          return { url: base, reason };
+        }
+      }),
+    );
+  const instances: NonNullable<ListEnginesResponse['instances']> = [];
+  let primary: { raw: unknown; engines: string[] } | undefined;
+  let lastReason: unknown;
+  for (const outcome of outcomes) {
+    if ('raw' in outcome) {
+      const view = instanceEngineView(outcome.raw);
+      instances.push({
+        url: outcome.url,
+        engines: view.engines,
+        unavailableEngines: view.unavailableEngines,
+      });
+      if (primary === undefined) {
+        primary = { raw: outcome.raw, engines: view.engines };
+      } else {
+        // Fold the next reachable instance into the running intersection.
+        const present = new Set(view.engines);
+        primary.engines = primary.engines.filter((name) => present.has(name));
+      }
+    } else {
+      lastReason = outcome.reason;
+      instances.push({ url: outcome.url, error: replicaErrorText(outcome.reason) });
+    }
+  }
+  if (primary === undefined) throw lastReason;
+  return { ...mapEnginesResponse(primary.raw), instances, commonEngines: primary.engines };
 }

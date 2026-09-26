@@ -227,6 +227,18 @@ export const listEnginesOutput = z.object({
   ),
   categories: z.array(z.string()),
   counts: z.object({ engines: z.number(), categories: z.number() }),
+  // D15 aggregation, present only when more than one instance is configured.
+  instances: z
+    .array(
+      z.object({
+        url: z.string(),
+        engines: z.array(z.string()).optional(),
+        unavailableEngines: z.array(z.string()).optional(),
+        error: z.string().optional(),
+      }),
+    )
+    .optional(),
+  commonEngines: z.array(z.string()).optional(),
 });
 export type ListEnginesResponse = z.infer<typeof listEnginesOutput>;
 export type ListEngineEntry = z.infer<(typeof listEnginesOutput.shape)['engines']['element']>;

@@ -13,6 +13,7 @@ import {
   mapEnginesResponse,
   musicSearch,
   newsSearch,
+  replicaErrorText,
   runCategorySearch,
   search,
   searchBatch,
@@ -1224,6 +1225,121 @@ describe('listEngines', () => {
   it('reports a config-specific error on 403', async () => {
     const fetchImpl = asFetchLike(async () => new Response('no', { status: 403 }));
     await expect(listEngines(config, { fetchImpl })).rejects.toThrow(/config/i);
+  });
+});
+
+describe('listEngines instance aggregation (D15)', () => {
+  const twoInstances = makeConfig({
+    searxngUrls: ['http://searx.test:8888', 'http://backup.test:8888'],
+  });
+  const primaryBody = {
+    engines: {
+      a: { name: 'alpha', enabled: true, categories: ['general'] },
+      b: { name: 'beta', enabled: true, categories: ['general', 'it'] },
+      off: { name: 'gamma', enabled: false, categories: ['general'] },
+      junk: 42,
+      noName: { enabled: true, categories: ['general'] },
+      blank: { name: '   ', enabled: true, categories: ['general'] },
+    },
+  };
+  const backupBody = {
+    engines: {
+      a: { name: 'alpha', enabled: true, categories: ['general'] },
+      d: { name: 'delta', enabled: true, categories: ['it'] },
+    },
+  };
+  const primaryNames = ['alpha', 'beta'];
+  const backupNames = ['alpha', 'delta'];
+
+  it('fetches every /config concurrently and aggregates per-instance engines', async () => {
+    const seen: string[] = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const fetchImpl = asFetchLike(async (url: string) => {
+      seen.push(url);
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight -= 1;
+      return url.startsWith('http://backup.test:8888')
+        ? jsonResponse(backupBody)
+        : jsonResponse(primaryBody);
+    });
+    const res = await listEngines(twoInstances, { fetchImpl });
+    expect(seen).toEqual(['http://searx.test:8888/config', 'http://backup.test:8888/config']);
+    expect(maxInFlight).toBe(2);
+    expect(res.engines.map((engine) => engine.name)).toEqual(primaryNames);
+    expect(res.instances).toEqual([
+      { url: 'http://searx.test:8888', engines: primaryNames, unavailableEngines: ['gamma'] },
+      { url: 'http://backup.test:8888', engines: backupNames, unavailableEngines: [] },
+    ]);
+    expect(res.commonEngines).toEqual(['alpha']);
+  });
+
+  it('records a dead replica as an error entry and still succeeds', async () => {
+    const fetchImpl = asFetchLike(async (url: string) => {
+      if (url.startsWith('http://backup.test:8888')) throw new Error('ECONNREFUSED');
+      return jsonResponse(primaryBody);
+    });
+    const res = await listEngines(twoInstances, { fetchImpl });
+    expect(res.engines.map((engine) => engine.name)).toEqual(primaryNames);
+    expect(res.instances?.[1]?.error).toMatch(
+      /Could not reach SearXNG at http:\/\/backup\.test:8888/,
+    );
+    expect(res.commonEngines).toEqual(primaryNames);
+  });
+
+  it('keeps the primary view from the first reachable instance', async () => {
+    const fetchImpl = asFetchLike(async (url: string) => {
+      if (url.startsWith('http://searx.test:8888')) return new Response('no', { status: 503 });
+      return jsonResponse(backupBody);
+    });
+    const res = await listEngines(twoInstances, { fetchImpl });
+    expect(res.engines.map((engine) => engine.name)).toEqual(backupNames);
+    expect(res.instances?.[0]?.error).toMatch(/HTTP 503/);
+    expect(res.commonEngines).toEqual(backupNames);
+  });
+
+  it('rejects with the last instance error when nothing is reachable', async () => {
+    const fetchImpl = asFetchLike(async () => {
+      throw new Error('down');
+    });
+    await expect(listEngines(twoInstances, { fetchImpl })).rejects.toThrow(
+      /Could not reach SearXNG at http:\/\/backup\.test:8888/,
+    );
+  });
+
+  it('treats an unusable config body as zero engines, emptying the intersection', async () => {
+    const fetchImpl = asFetchLike(async (url: string) => {
+      if (url.startsWith('http://backup.test:8888')) return jsonResponse(null);
+      return jsonResponse(primaryBody);
+    });
+    const res = await listEngines(twoInstances, { fetchImpl });
+    expect(res.instances?.[1]).toEqual({
+      url: 'http://backup.test:8888',
+      engines: [],
+      unavailableEngines: [],
+    });
+    expect(res.commonEngines).toEqual([]);
+  });
+
+  it('keeps single-instance output byte-identical: no aggregation fields', async () => {
+    const fetchImpl = asFetchLike(async () => jsonResponse(primaryBody));
+    const res = await listEngines(config, { fetchImpl });
+    expect(Object.keys(res)).toEqual(['engines', 'categories', 'counts']);
+    expect(res).toEqual({
+      engines: [
+        { name: 'alpha', categories: ['general'] },
+        { name: 'beta', categories: ['general', 'it'] },
+      ],
+      categories: ['general', 'it'],
+      counts: { engines: 2, categories: 2 },
+    });
+  });
+
+  it('sanitizes replica error entries', () => {
+    expect(replicaErrorText(new Error('boom'))).toBe('boom');
+    expect(replicaErrorText('plain refusal')).toBe('plain refusal');
   });
 });
 
