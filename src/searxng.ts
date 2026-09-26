@@ -3,6 +3,7 @@ import { cached } from './cache.js';
 import type { Config } from './config.js';
 import type { TtlCache } from './cache.js';
 import { isRedirect, readCapped, type FetchLike } from './http.js';
+import { parseSearchResultsHtml } from './html-results.js';
 import {
   asStringArray,
   buildCategoryEnvelope,
@@ -46,10 +47,24 @@ export interface ClientOptions {
 export class SearxngError extends Error {
   /** True when a failover instance could still answer (D8: network, timeout, 5xx, 429, 403). */
   readonly retryable: boolean;
-  constructor(message: string, options?: { cause?: unknown; retryable?: boolean | undefined }) {
+  /** HTTP status when the failure was a non-ok response; undefined otherwise. */
+  readonly status: number | undefined;
+  /** True when a 2xx body failed JSON.parse (D13 HTML-fallback trigger). */
+  readonly badJson: boolean;
+  constructor(
+    message: string,
+    options?: {
+      cause?: unknown;
+      retryable?: boolean | undefined;
+      status?: number | undefined;
+      badJson?: boolean | undefined;
+    },
+  ) {
     super(message, options);
     this.name = 'SearxngError';
     this.retryable = options?.retryable === true;
+    this.status = options?.status;
+    this.badJson = options?.badJson === true;
   }
 }
 
@@ -180,11 +195,13 @@ export interface InstanceRequest {
   explainBadJson: string;
 }
 
-async function fetchInstanceJson(
+/** Fetch one instance URL through the shared error taxonomy (timeout,
+ * unreachable, redirect refusal, byte cap) and return the raw body text. */
+async function fetchInstanceBody(
   config: Config,
   url: string,
-  opts: InstanceRequest,
-): Promise<unknown> {
+  opts: Pick<InstanceRequest, 'fetchImpl' | 'headers' | 'explainStatus'>,
+): Promise<string> {
   // Cast bridges @types/node's vendored RequestInit and undici's own types
   // (two structural copies of the same dispatcher interface).
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
@@ -218,16 +235,17 @@ async function fetchInstanceJson(
       if (isRedirect(response.status)) {
         throw new SearxngError(
           `SearXNG answered with an HTTP ${response.status} redirect. SEARXNG_URL must point directly at the instance.`,
+          { status: response.status },
         );
       }
       throw new SearxngError(opts.explainStatus(response.status, base), {
         retryable: failoverStatus(response.status),
+        status: response.status,
       });
     }
 
-    let body: string;
     try {
-      body = await readCapped(response, config.maxResponseBytes);
+      return await readCapped(response, config.maxResponseBytes);
     } catch (error) {
       if (controller.signal.aborted) {
         throw new SearxngError(`SearXNG timed out after ${config.searxngTimeoutMs} ms.`, {
@@ -240,14 +258,21 @@ async function fetchInstanceJson(
         { cause: error },
       );
     }
-
-    try {
-      return JSON.parse(body);
-    } catch (error) {
-      throw new SearxngError(opts.explainBadJson, { cause: error });
-    }
   } finally {
     clearTimeout(timer);
+  }
+}
+
+async function fetchInstanceJson(
+  config: Config,
+  url: string,
+  opts: InstanceRequest,
+): Promise<unknown> {
+  const body = await fetchInstanceBody(config, url, opts);
+  try {
+    return JSON.parse(body);
+  } catch (error) {
+    throw new SearxngError(opts.explainBadJson, { cause: error, badJson: true });
   }
 }
 
@@ -284,12 +309,50 @@ async function fetchSearchJson(config: Config, params: SearchParams, opts: Clien
   );
 }
 
+/** Same query without `format=json` — the instance's HTML UI (D13). */
+function htmlSearchUrl(base: string, params: SearchParams): string {
+  const qs = buildSearchParams(params);
+  qs.delete('format');
+  return `${base}/search?${qs.toString()}`;
+}
+
+async function fetchSearchHtml(config: Config, params: SearchParams, opts: ClientOptions) {
+  return fetchInstanceBody(config, htmlSearchUrl(config.searxngUrl, params), {
+    fetchImpl: opts.fetchImpl,
+    headers: { Accept: 'text/html' },
+    explainStatus: SEARCH_EXPLAIN,
+  });
+}
+
+/** True only for the D13 triggers: a 403 (limiter / JSON API disabled) or a
+ * non-JSON body — and only when the operator opted in. */
+function htmlFallbackEligible(config: Config, error: unknown): boolean {
+  if (!config.htmlFallback) return false;
+  if (!(error instanceof SearxngError)) return false;
+  return error.status === 403 || error.badJson;
+}
+
 export async function search(
   config: Config,
   params: SearchParams,
   opts: ClientOptions = {},
 ): Promise<SearchResponse> {
-  const raw = await fetchSearchJson(config, params, opts);
+  let raw: unknown;
+  try {
+    raw = await fetchSearchJson(config, params, opts);
+  } catch (error) {
+    if (!htmlFallbackEligible(config, error)) throw error;
+    raw = await cached(opts.cache, 'GET', htmlSearchUrl(config.searxngUrl, params), () =>
+      fetchSearchHtml(config, params, opts).then((html) =>
+        parseSearchResultsHtml(html, params.query),
+      ),
+    ).catch((fallbackError: unknown) => {
+      throw new SearxngError(
+        `HTML fallback failed: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`,
+        { cause: fallbackError },
+      );
+    });
+  }
   return mapSearchResponse(raw, params.maxResults, params.minScore);
 }
 

@@ -28,6 +28,7 @@ export function makeConfig(overrides: Partial<Config> = {}): Config {
     port: 0, // ephemeral: every use listens on its own free port
     allowedHosts: [],
     allowedOrigins: [],
+    htmlFallback: false,
     ...overrides,
   };
 }

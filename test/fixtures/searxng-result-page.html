@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>test query - SearXNG</title>
+  </head>
+  <body>
+    <main>
+      <form id="search" method="post">
+        <input id="q" name="q" type="search" value="test query" />
+      </form>
+      <div id="results" role="main">
+        <article class="result result-default">
+          <h3>
+            <a href="https://docs.test/first" rel="noreferrer">First &amp; foremost result</a>
+          </h3>
+          <p class="content">
+            Snippet with <b>markup</b> and entities: caf&eacute; &mdash; r&eacute;sum&eacute;
+          </p>
+          <div class="engines">
+            <span>google</span>
+            <span>bing</span>
+          </div>
+          <time class="published_date" datetime="2026-09-20T12:00:00Z">6 days ago</time>
+        </article>
+
+        <article class="result result-default">
+          <h3><a href="https://plain.test/second" rel="noreferrer">Second result</a></h3>
+          <p class="content">A plain one-line snippet.</p>
+        </article>
+
+        <article class="result result-default">
+          <h3><a href="https://nosnippet.test/third" rel="noreferrer">Third result</a></h3>
+          <div class="engines"><span>duckduckgo</span></div>
+          <time class="published_date">September 2026</time>
+        </article>
+
+        <!-- image result: no h3 > a, must be dropped defensively -->
+        <article class="result result-images">
+          <a href="https://img.test/1.png"><img src="https://img.test/1.thumb.png" /></a>
+          <h3><span>An image result</span></h3>
+        </article>
+
+        <!-- empty href: must be dropped defensively -->
+        <article class="result result-default">
+          <h3><a href="" rel="noreferrer">Href-less result</a></h3>
+          <p class="content">Should never appear.</p>
+        </article>
+
+        <!-- multiline content: whitespace collapses to single spaces -->
+        <article class="result result-default">
+          <h3><a href="https://multiline.test/fourth">Multiline snippet</a></h3>
+          <p class="content">Line one. Line two.</p>
+        </article>
+      </div>
+    </main>
+  </body>
+</html>
