@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-26
+
 ### Fixed
 
 - `fetch_content` no longer fails with `First argument to Readability constructor should be a document object` on non-HTML textual bodies (plain text, Markdown, JSON, XML/feeds), such as raw files served as `text/plain`; only `text/html`/`application/xhtml+xml` (and responses without a Content-Type) go through Readability, while other allowed textual types pass through verbatim, preserving Markdown tables, code fences and heading offsets (D17). `extractArticle`/`stripToText` additionally guard tagless input that linkedom parses without a `documentElement`.
@@ -132,7 +134,8 @@ No 0.3.x compatibility shims (pre-1.0 minor, per the release policy):
 - Bundled SearXNG Docker stack (pinned image, loopback-only) and end-to-end verification script.
 - 260 unit tests, CI matrix (Node 22.19/24/26), type-aware linting, coverage.
 
-[Unreleased]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v0.3.1...v0.3.2
