@@ -7,18 +7,20 @@ import type { LookupAll } from '../src/ssrf.js';
 import {
   fetchInput,
   fetchOutput,
+  searchInput,
+  searchOutput,
+  searchToolOutput,
+} from '../src/schemas.js';
+import {
   imageSearchInput,
   imageSearchOutput,
   musicSearchInput,
   musicSearchOutput,
   newsSearchInput,
   newsSearchOutput,
-  searchInput,
-  searchOutput,
-  searchToolOutput,
   videoSearchInput,
   videoSearchOutput,
-} from '../src/schemas.js';
+} from '../src/categories/schemas.js';
 import {
   handleAutocomplete,
   handleFetch,

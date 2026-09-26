@@ -17,19 +17,21 @@ import { imageCategory } from './categories/images.js';
 import { musicCategory } from './categories/music.js';
 import { newsCategory } from './categories/news.js';
 import { videoCategory } from './categories/videos.js';
+import type {
+  ImageSearchResponse,
+  MusicSearchResponse,
+  NewsSearchResponse,
+  VideoSearchResponse,
+} from './categories/schemas.js';
 import {
   MAX_URLS_PER_INFOBOX,
   type ListEngineEntry,
   type ListEnginesResponse,
-  type ImageSearchResponse,
-  type MusicSearchResponse,
-  type NewsSearchResponse,
   type SearchAnswer,
   type SearchBatchResponse,
   type SearchInfobox,
   type SearchParams,
   type SearchResponse,
-  type VideoSearchResponse,
 } from './schemas.js';
 
 const MAX_INFOBOX_ID_CHARS = 200;
