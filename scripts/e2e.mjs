@@ -193,6 +193,87 @@ async function main() {
       }
     }
 
+    // 4a-read. Reading controls (D14): outline + section round-trip on a real
+    // page; soft-skip the whole block when the public network is unreachable.
+    const OUTLINE_URL = 'https://en.wikipedia.org/wiki/Web_crawler';
+    const TRUNCATION_MARKER = '\n\n[Content truncated]';
+    const outlineCall = await request(serverProcess, 'tools/call', {
+      name: 'fetch_content',
+      arguments: { url: OUTLINE_URL, max_chars: 200_000, outline: true },
+    });
+    const outlineErrorText = outlineCall.result?.content?.[0]?.text ?? '';
+    if (
+      outlineCall.result?.isError === true &&
+      /timed out|fetch failed|ENOTFOUND|ECONNREFUSED|EAI_AGAIN|ECONNRESET|network|HTTP 5\d\d/i.test(
+        outlineErrorText,
+      )
+    ) {
+      console.log('SKIPPED (network): outline page is unreachable');
+    } else {
+      assert(
+        !outlineCall.error && !outlineCall.result?.isError,
+        'fetch_content with outline succeeds',
+      );
+      const outline = outlineCall.result?.structuredContent;
+      const headings = outline?.headings;
+      assert(
+        Array.isArray(headings) && headings.length > 1 && outline?.truncated === false,
+        `outline returns the full document with headings (got ${headings?.length ?? 0}, truncated=${outline?.truncated})`,
+      );
+      // Each offset must point exactly at its heading's #-line in the content.
+      const mismatched = headings.filter((h) => {
+        const line = outline.content.slice(h.offset).split('\n')[0];
+        return line.trimEnd() !== `${'#'.repeat(h.level)} ${h.text}`;
+      });
+      assert(
+        mismatched.length === 0,
+        `all heading offsets are consistent (${mismatched.length} mismatched)`,
+      );
+      const target = headings.find((h) => h.level === 2);
+      assert(target !== undefined, 'outline contains a level-2 heading for the section round-trip');
+      const next = headings.find((h) => h.offset > target.offset && h.level <= target.level);
+      const fullSection = outline.content
+        .slice(target.offset, next === undefined ? outline.content.length : next.offset)
+        .trimEnd();
+      const sectionCall = await request(serverProcess, 'tools/call', {
+        name: 'fetch_content',
+        arguments: { url: OUTLINE_URL, section: target.text, max_chars: 1000 },
+      });
+      assert(
+        !sectionCall.error && !sectionCall.result?.isError,
+        'fetch_content with section succeeds',
+      );
+      const sectioned = sectionCall.result?.structuredContent;
+      assert(
+        typeof sectioned?.content === 'string' &&
+          sectioned.content.startsWith(`${'#'.repeat(target.level)} ${target.text}`),
+        'section content starts at the requested heading',
+      );
+      if (fullSection.length <= 1000) {
+        assert(sectioned.content === fullSection, 'short section returns its full text');
+      } else {
+        assert(
+          sectioned.truncated === true && sectioned.nextOffset === 1000,
+          'section window is truncated with nextOffset=1000',
+        );
+        assert(
+          sectioned.content ===
+            fullSection.slice(0, 1000 - TRUNCATION_MARKER.length) + TRUNCATION_MARKER,
+          'section window matches the outline-derived slice',
+        );
+        const resumeCall = await request(serverProcess, 'tools/call', {
+          name: 'fetch_content',
+          arguments: { url: OUTLINE_URL, section: target.text, offset: 1000, max_chars: 1000 },
+        });
+        const resumed = resumeCall.result?.structuredContent;
+        assert(
+          typeof resumed?.content === 'string' &&
+            resumed.content.startsWith(fullSection.slice(1000, 1015)),
+          'offset inside the section resumes exactly where the window stopped',
+        );
+      }
+    }
+
     // 4a. image_search against the live SearXNG instance
     const imageCall = await request(serverProcess, 'tools/call', {
       name: 'image_search',

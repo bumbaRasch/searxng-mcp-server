@@ -124,6 +124,70 @@ async function main() {
       `paper_search returns results over HTTP (got ${papers.structuredContent?.results?.length ?? 0})`,
     );
 
+    // v0.5.0 reading controls (D14) over Streamable HTTP: outline + section
+    // round-trip on a real page.
+    const OUTLINE_URL = 'https://en.wikipedia.org/wiki/Web_crawler';
+    const outline = await client.callTool({
+      name: 'fetch_content',
+      arguments: { url: OUTLINE_URL, max_chars: 200_000, outline: true },
+    });
+    assert(!outline.isError, 'fetch_content with outline succeeds over HTTP');
+    const headings = outline.structuredContent?.headings;
+    assert(
+      Array.isArray(headings) &&
+        headings.length > 1 &&
+        outline.structuredContent?.truncated === false,
+      `outline returns the full document with headings over HTTP (got ${headings?.length ?? 0})`,
+    );
+    assert(
+      headings.every(
+        (h) =>
+          outline.structuredContent.content.slice(h.offset).split('\n')[0].trimEnd() ===
+          `${'#'.repeat(h.level)} ${h.text}`,
+      ),
+      'all heading offsets are consistent over HTTP',
+    );
+    const target = headings.find((h) => h.level === 2);
+    assert(target !== undefined, 'outline contains a level-2 heading over HTTP');
+    const next = headings.find((h) => h.offset > target.offset && h.level <= target.level);
+    const fullSection = outline.structuredContent.content
+      .slice(
+        target.offset,
+        next === undefined ? outline.structuredContent.content.length : next.offset,
+      )
+      .trimEnd();
+    const sectioned = await client.callTool({
+      name: 'fetch_content',
+      arguments: { url: OUTLINE_URL, section: target.text, max_chars: 1000 },
+    });
+    assert(
+      !sectioned.isError &&
+        sectioned.structuredContent?.content?.startsWith(
+          `${'#'.repeat(target.level)} ${target.text}`,
+        ),
+      'section content starts at the requested heading over HTTP',
+    );
+    if (fullSection.length > 1000) {
+      assert(
+        sectioned.structuredContent.truncated === true &&
+          sectioned.structuredContent.nextOffset === 1000,
+        'section window is truncated with nextOffset=1000 over HTTP',
+      );
+      const resumed = await client.callTool({
+        name: 'fetch_content',
+        arguments: { url: OUTLINE_URL, section: target.text, offset: 1000, max_chars: 1000 },
+      });
+      assert(
+        resumed.structuredContent?.content?.startsWith(fullSection.slice(1000, 1015)),
+        'offset inside the section resumes exactly over HTTP',
+      );
+    } else {
+      assert(
+        sectioned.structuredContent.content === fullSection,
+        'short section returns its full text over HTTP',
+      );
+    }
+
     // Modern-only endpoint: a 2025-era initialize must get a typed rejection.
     const legacy = await fetch(url, {
       method: 'POST',
