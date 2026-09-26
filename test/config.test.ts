@@ -167,6 +167,48 @@ describe('SEARXNG_HTML_FALLBACK (D13)', () => {
   });
 });
 
+describe('operator defaults (D16)', () => {
+  it('stays unset for an empty environment', () => {
+    const cfg = loadConfig({}, '0.0.0');
+    expect(cfg.defaultLanguage).toBeUndefined();
+    expect(cfg.defaultSafesearch).toBeUndefined();
+    expect(cfg.maxResults).toBeUndefined();
+  });
+
+  it('parses SEARXNG_DEFAULT_LANGUAGE, trimming and ignoring blanks', () => {
+    expect(loadConfig({ SEARXNG_DEFAULT_LANGUAGE: 'de' }, '0.0.0').defaultLanguage).toBe('de');
+    expect(loadConfig({ SEARXNG_DEFAULT_LANGUAGE: ' en-US ' }, '0.0.0').defaultLanguage).toBe(
+      'en-US',
+    );
+    expect(
+      loadConfig({ SEARXNG_DEFAULT_LANGUAGE: '   ' }, '0.0.0').defaultLanguage,
+    ).toBeUndefined();
+  });
+
+  it('parses SEARXNG_DEFAULT_SAFESEARCH 0/1/2 and warns+unsets invalid values', () => {
+    expect(loadConfig({ SEARXNG_DEFAULT_SAFESEARCH: '0' }, '0.0.0').defaultSafesearch).toBe(0);
+    expect(loadConfig({ SEARXNG_DEFAULT_SAFESEARCH: '1' }, '0.0.0').defaultSafesearch).toBe(1);
+    expect(loadConfig({ SEARXNG_DEFAULT_SAFESEARCH: ' 2 ' }, '0.0.0').defaultSafesearch).toBe(2);
+    const warnings: string[] = [];
+    const cfg = loadConfig({ SEARXNG_DEFAULT_SAFESEARCH: 'strict' }, '0.0.0', (message) =>
+      warnings.push(message),
+    );
+    expect(cfg.defaultSafesearch).toBeUndefined();
+    expect(warnings.join('\n')).toMatch(/SEARXNG_DEFAULT_SAFESEARCH.*expected 0, 1 or 2/);
+  });
+
+  it('parses SEARXNG_MAX_RESULTS and warns+unsets values below 1', () => {
+    expect(loadConfig({ SEARXNG_MAX_RESULTS: '25' }, '0.0.0').maxResults).toBe(25);
+    expect(loadConfig({ SEARXNG_MAX_RESULTS: ' 7 ' }, '0.0.0').maxResults).toBe(7);
+    const warnings: string[] = [];
+    const cfg = loadConfig({ SEARXNG_MAX_RESULTS: '0' }, '0.0.0', (message) =>
+      warnings.push(message),
+    );
+    expect(cfg.maxResults).toBeUndefined();
+    expect(warnings.join('\n')).toMatch(/SEARXNG_MAX_RESULTS.*expected an integer >= 1/);
+  });
+});
+
 describe('SHUTDOWN_TIMEOUT_MS', () => {
   it('defaults to 5000', () => {
     expect(loadConfig({}, '1.0.0').shutdownTimeoutMs).toBe(5000);
