@@ -146,6 +146,27 @@ describe('config diagnostics', () => {
   });
 });
 
+describe('SEARXNG_HTML_FALLBACK (D13)', () => {
+  it('defaults to false and parses boolean values like the other flags', () => {
+    expect(loadConfig({}, '0.0.0').htmlFallback).toBe(false);
+    expect(loadConfig({ SEARXNG_HTML_FALLBACK: '1' }, '0.0.0').htmlFallback).toBe(true);
+    expect(loadConfig({ SEARXNG_HTML_FALLBACK: 'yes' }, '0.0.0').htmlFallback).toBe(true);
+    expect(loadConfig({ SEARXNG_HTML_FALLBACK: 'TRUE' }, '0.0.0').htmlFallback).toBe(true);
+    expect(loadConfig({ SEARXNG_HTML_FALLBACK: '0' }, '0.0.0').htmlFallback).toBe(false);
+    expect(loadConfig({ SEARXNG_HTML_FALLBACK: 'no' }, '0.0.0').htmlFallback).toBe(false);
+    expect(loadConfig({ SEARXNG_HTML_FALLBACK: 'off' }, '0.0.0').htmlFallback).toBe(false);
+  });
+
+  it('warns and falls back to false on an unrecognized value', () => {
+    const warnings: string[] = [];
+    const cfg = loadConfig({ SEARXNG_HTML_FALLBACK: 'maybe' }, '1.0.0', (message) =>
+      warnings.push(message),
+    );
+    expect(cfg.htmlFallback).toBe(false);
+    expect(warnings.join('\n')).toMatch(/SEARXNG_HTML_FALLBACK/);
+  });
+});
+
 describe('SHUTDOWN_TIMEOUT_MS', () => {
   it('defaults to 5000', () => {
     expect(loadConfig({}, '1.0.0').shutdownTimeoutMs).toBe(5000);

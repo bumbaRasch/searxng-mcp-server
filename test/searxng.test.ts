@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildSearchParams,
@@ -36,6 +37,7 @@ import {
 } from '../src/categories/schemas.js';
 import { asFetchLike, jsonResponse, makeConfig } from './helpers.js';
 import type { FetchLike } from '../src/http.js';
+import { TtlCache } from '../src/cache.js';
 
 describe('buildSearchParams', () => {
   it('always sets q and format=json', () => {
@@ -882,6 +884,151 @@ describe('fetchSearchJson robustness', () => {
     await expect(search(config, params, { fetchImpl })).rejects.toThrow(
       /429.*limiter|limiter.*429/is,
     );
+  });
+});
+
+describe('HTML fallback (D13)', () => {
+  const fixtureHtml = readFileSync(
+    new URL('./fixtures/searxng-result-page.html', import.meta.url),
+    'utf8',
+  );
+  const params = { query: 'q', maxResults: 10 };
+  // the shared config caps bodies at 1000 bytes — the result page needs more
+  const fallbackConfig = makeConfig({ htmlFallback: true, maxResponseBytes: 100_000 });
+
+  function urlSequenceFetch(calls: string[], htmlBody = fixtureHtml) {
+    return asFetchLike(async (url: string) => {
+      calls.push(url);
+      if (url.includes('format=json')) return new Response('forbidden', { status: 403 });
+      return new Response(htmlBody, { status: 200, headers: { 'content-type': 'text/html' } });
+    });
+  }
+
+  it('retries without format=json on 403 when the flag is on and parses the page', async () => {
+    const calls: string[] = [];
+    const fetchImpl = urlSequenceFetch(calls);
+    const res = await search(fallbackConfig, params, { fetchImpl });
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toContain('format=json');
+    expect(calls[1]).toBe('http://searx.test:8888/search?q=q');
+    expect(res.results.map((result) => result.title)).toEqual([
+      'First & foremost result',
+      'Second result',
+      'Third result',
+      'Multiline snippet',
+    ]);
+    // envelope identical to the JSON path on the fallback
+    expect(res.suggestions).toEqual([]);
+    expect(res.unresponsiveEngines).toEqual([]);
+    expect(res.query).toBe('q');
+  });
+
+  it('retries on a non-JSON body when the flag is on', async () => {
+    const calls: string[] = [];
+    const fetchImpl = asFetchLike(async (url: string) => {
+      calls.push(url);
+      if (url.includes('format=json')) return new Response('<html>nope</html>', { status: 200 });
+      return new Response(fixtureHtml, { status: 200 });
+    });
+    const res = await search(fallbackConfig, params, { fetchImpl });
+    expect(calls).toHaveLength(2);
+    expect(res.results[0]?.url).toBe('https://docs.test/first');
+  });
+
+  it('never retries when the flag is off (current errors)', async () => {
+    const forbidden = asFetchLike(async () => new Response('forbidden', { status: 403 }));
+    await expect(search(config, params, { fetchImpl: forbidden })).rejects.toThrow(
+      /search\.formats/,
+    );
+    const html = asFetchLike(async () => new Response('<html>nope</html>', { status: 200 }));
+    await expect(search(config, params, { fetchImpl: html })).rejects.toThrow(/non-JSON/i);
+  });
+
+  it('does not fire for 400/500/redirect/timeout errors even when the flag is on', async () => {
+    const cases: Array<[number, RegExp]> = [
+      [400, /parameters/i],
+      [500, /500/],
+    ];
+    for (const [status, pattern] of cases) {
+      const calls: string[] = [];
+      const fetchImpl = asFetchLike(async (url: string) => {
+        calls.push(url);
+        return new Response('no', { status });
+      });
+      await expect(search(fallbackConfig, params, { fetchImpl })).rejects.toThrow(pattern);
+      expect(calls).toHaveLength(1);
+    }
+
+    const redirect = asFetchLike(
+      async () => new Response(null, { status: 302, headers: { location: 'http://x.test/' } }),
+    );
+    await expect(search(fallbackConfig, params, { fetchImpl: redirect })).rejects.toThrow(
+      /redirect/i,
+    );
+
+    const stalling = asFetchLike(
+      (_url: unknown, init?: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('aborted', 'AbortError')),
+          );
+        }),
+    );
+    await expect(
+      search({ ...fallbackConfig, searxngTimeoutMs: 10 }, params, {
+        fetchImpl: stalling,
+      }),
+    ).rejects.toThrow(/timed out after 10 ms/);
+  });
+
+  it('surfaces a wrapped error when the fallback fetch itself fails', async () => {
+    const fetchImpl = asFetchLike(async (url: string) => {
+      if (url.includes('format=json')) return new Response('forbidden', { status: 403 });
+      return new Response('boom', { status: 500 });
+    });
+    await expect(search(fallbackConfig, params, { fetchImpl })).rejects.toThrow(
+      /HTML fallback failed: SearXNG request failed with HTTP 500/,
+    );
+  });
+
+  it('fires after failover exhaustion against the primary, not per replica', async () => {
+    const failover = makeConfig({
+      searxngUrls: ['http://searx.test:8888', 'http://backup.test:8888'],
+      htmlFallback: true,
+    });
+    const calls: string[] = [];
+    const fetchImpl = urlSequenceFetch(calls);
+    const res = await search(failover, params, { fetchImpl });
+    expect(calls).toEqual([
+      'http://searx.test:8888/search?q=q&format=json',
+      'http://backup.test:8888/search?q=q&format=json',
+      'http://searx.test:8888/search?q=q',
+    ]);
+    expect(res.results).toHaveLength(4);
+  });
+
+  it('caches the parsed fallback payload under the format-less URL', async () => {
+    const cache = new TtlCache<unknown>(16, 60_000);
+    const calls: string[] = [];
+    const fetchImpl = urlSequenceFetch(calls);
+    const opts = { fetchImpl, cache };
+    const first = await search(fallbackConfig, params, opts);
+    const second = await search(fallbackConfig, params, opts);
+    expect(calls).toHaveLength(3); // json miss, html fetch, then json miss again
+    expect(calls[2]).toContain('format=json');
+    expect(second.results).toEqual(first.results);
+  });
+
+  it('leaves category tools on the JSON-only path', async () => {
+    let calls = 0;
+    const fetchImpl = asFetchLike(async () => {
+      calls += 1;
+      return new Response('forbidden', { status: 403 });
+    });
+    await expect(
+      imageSearch(fallbackConfig, { query: 'q', maxResults: 10 }, { fetchImpl }),
+    ).rejects.toThrow(/search\.formats/);
+    expect(calls).toBe(1);
   });
 });
 

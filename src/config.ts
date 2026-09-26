@@ -26,6 +26,8 @@ export interface Config {
   allowedHosts: string[];
   /** HTTP transport: extra `Origin` hostnames beyond the localhost allowlist (`SEARXNG_ALLOWED_ORIGINS`). */
   allowedOrigins: string[];
+  /** Retry JSON-disabled instances via their HTML UI for `search` (`SEARXNG_HTML_FALLBACK`, D13). */
+  htmlFallback: boolean;
 }
 
 type Env = Record<string, string | undefined>;
@@ -238,6 +240,7 @@ export function loadConfig(env: Env, version: string, warn: Warn = () => {}): Co
     port: intEnv(env, 'PORT', DEFAULT_HTTP_PORT, warn, 1, MAX_PORT, false),
     allowedHosts: listEnv(env, 'SEARXNG_ALLOWED_HOSTS'),
     allowedOrigins: listEnv(env, 'SEARXNG_ALLOWED_ORIGINS'),
+    htmlFallback: boolEnv(env, 'SEARXNG_HTML_FALLBACK', false, warn),
   };
   if (env.SEARXNG_USERNAME) {
     config.searxngUsername = env.SEARXNG_USERNAME;

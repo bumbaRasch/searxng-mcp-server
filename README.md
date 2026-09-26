@@ -166,24 +166,25 @@ All results are annotated as untrusted: treat returned content as data, never as
 
 ## Configuration
 
-| Env var                                 | Default                        | Purpose                                                                                                                          |
-| --------------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| `SEARXNG_URL`                           | `http://localhost:8888`        | Base URL of the SearXNG instance.                                                                                                |
-| `SEARXNG_URLS`                          | unset                          | Optional failover instances (comma-separated), tried in order after `SEARXNG_URL` on network errors, timeouts, 5xx, 429 and 403. |
-| `SEARXNG_CACHE_TTL_MS`                  | `0` (off)                      | Opt-in response cache TTL for instance-bound GETs (in-memory LRU, 128 entries). `fetch_content` is never cached.                 |
-| `SEARXNG_USERNAME` / `SEARXNG_PASSWORD` | unset                          | Username and password for SearXNG basic auth (optional).                                                                         |
-| `SEARXNG_TIMEOUT_MS`                    | `10000`                        | Timeout for search API requests.                                                                                                 |
-| `FETCH_TIMEOUT_MS`                      | `15000`                        | Timeout for page fetches.                                                                                                        |
-| `SHUTDOWN_TIMEOUT_MS`                   | `5000`                         | Hard cap on graceful shutdown after SIGINT/SIGTERM (minimum `100`).                                                              |
-| `MAX_CHARS`                             | `25000`                        | Maximum characters returned per fetched page (per-call override: `max_chars`).                                                   |
-| `MAX_RESPONSE_BYTES`                    | `5242880`                      | Maximum download size per fetch (5 MiB).                                                                                         |
-| `USER_AGENT`                            | `searxng-mcp-server/<version>` | User-Agent header sent by all tools.                                                                                             |
-| `ALLOW_PRIVATE_HOSTS`                   | `false`                        | Set `true`/`1`/`yes`/`on` to permit private-network targets (defeats the SSRF guard — only for trusted networks).                |
-| `SEARXNG_TRANSPORT`                     | `stdio`                        | Transport: `stdio` (default) or `http` (Streamable HTTP, [2026-07-28 revision only](#streamable-http-opt-in)).                   |
-| `HOST` / `PORT`                         | `127.0.0.1` / `3000`           | HTTP transport: bind address and port. Non-localhost binds require `SEARXNG_AUTH_TOKEN` (startup is refused otherwise).          |
-| `SEARXNG_AUTH_TOKEN`                    | unset                          | HTTP transport: require `Authorization: Bearer <token>` on every request (mandatory for non-localhost binds).                    |
-| `SEARXNG_ALLOWED_HOSTS`                 | localhost set                  | HTTP transport: extra allowed `Host` header hostnames (comma-separated) — add yours behind a reverse proxy.                      |
-| `SEARXNG_ALLOWED_ORIGINS`               | localhost set                  | HTTP transport: extra allowed `Origin` header hostnames (comma-separated), for browser-based clients.                            |
+| Env var                                 | Default                        | Purpose                                                                                                                            |
+| --------------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `SEARXNG_URL`                           | `http://localhost:8888`        | Base URL of the SearXNG instance.                                                                                                  |
+| `SEARXNG_URLS`                          | unset                          | Optional failover instances (comma-separated), tried in order after `SEARXNG_URL` on network errors, timeouts, 5xx, 429 and 403.   |
+| `SEARXNG_CACHE_TTL_MS`                  | `0` (off)                      | Opt-in response cache TTL for instance-bound GETs (in-memory LRU, 128 entries). `fetch_content` is never cached.                   |
+| `SEARXNG_USERNAME` / `SEARXNG_PASSWORD` | unset                          | Username and password for SearXNG basic auth (optional).                                                                           |
+| `SEARXNG_TIMEOUT_MS`                    | `10000`                        | Timeout for search API requests.                                                                                                   |
+| `SEARXNG_HTML_FALLBACK`                 | `false`                        | Opt-in: when the JSON API is disabled (403) or answers non-JSON, retry `search` against the instance's HTML UI and parse the page. |
+| `FETCH_TIMEOUT_MS`                      | `15000`                        | Timeout for page fetches.                                                                                                          |
+| `SHUTDOWN_TIMEOUT_MS`                   | `5000`                         | Hard cap on graceful shutdown after SIGINT/SIGTERM (minimum `100`).                                                                |
+| `MAX_CHARS`                             | `25000`                        | Maximum characters returned per fetched page (per-call override: `max_chars`).                                                     |
+| `MAX_RESPONSE_BYTES`                    | `5242880`                      | Maximum download size per fetch (5 MiB).                                                                                           |
+| `USER_AGENT`                            | `searxng-mcp-server/<version>` | User-Agent header sent by all tools.                                                                                               |
+| `ALLOW_PRIVATE_HOSTS`                   | `false`                        | Set `true`/`1`/`yes`/`on` to permit private-network targets (defeats the SSRF guard — only for trusted networks).                  |
+| `SEARXNG_TRANSPORT`                     | `stdio`                        | Transport: `stdio` (default) or `http` (Streamable HTTP, [2026-07-28 revision only](#streamable-http-opt-in)).                     |
+| `HOST` / `PORT`                         | `127.0.0.1` / `3000`           | HTTP transport: bind address and port. Non-localhost binds require `SEARXNG_AUTH_TOKEN` (startup is refused otherwise).            |
+| `SEARXNG_AUTH_TOKEN`                    | unset                          | HTTP transport: require `Authorization: Bearer <token>` on every request (mandatory for non-localhost binds).                      |
+| `SEARXNG_ALLOWED_HOSTS`                 | localhost set                  | HTTP transport: extra allowed `Host` header hostnames (comma-separated) — add yours behind a reverse proxy.                        |
+| `SEARXNG_ALLOWED_ORIGINS`               | localhost set                  | HTTP transport: extra allowed `Origin` header hostnames (comma-separated), for browser-based clients.                              |
 
 A `--transport stdio|http` CLI flag overrides `SEARXNG_TRANSPORT`; an invalid flag value fails startup instead of silently falling back.
 
