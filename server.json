@@ -7,12 +7,12 @@
     "url": "https://github.com/bumbaRasch/searxng-mcp-server",
     "source": "github"
   },
-  "version": "0.4.0",
+  "version": "0.5.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "searxng-mcp-server",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "transport": {
         "type": "stdio"
       },
