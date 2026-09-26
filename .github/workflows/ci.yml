@@ -3,6 +3,8 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * *'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -37,7 +39,7 @@ jobs:
       - run: tar -tzf searxng-mcp-server-*.tgz | grep -E 'dist/index\.js'
       - run: tar -tzf searxng-mcp-server-*.tgz | grep -E '(README\.md|LICENSE)'
   e2e:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
       # Actions are pinned to commit SHAs (tags are movable).
