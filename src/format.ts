@@ -13,16 +13,18 @@ import { imageCategory } from './categories/images.js';
 import { musicCategory } from './categories/music.js';
 import { newsCategory } from './categories/news.js';
 import { videoCategory } from './categories/videos.js';
+import type {
+  ImageSearchResponse,
+  MusicSearchResponse,
+  NewsSearchResponse,
+  VideoSearchResponse,
+} from './categories/schemas.js';
 import {
   MAX_URLS_PER_INFOBOX,
   type FetchResult,
-  type ImageSearchResponse,
   type ListEnginesResponse,
-  type MusicSearchResponse,
-  type NewsSearchResponse,
   type SearchBatchResponse,
   type SearchResponse,
-  type VideoSearchResponse,
 } from './schemas.js';
 
 /** Compact mode keeps the snippet to roughly one line (D6). */

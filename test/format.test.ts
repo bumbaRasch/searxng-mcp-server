@@ -15,10 +15,9 @@ import {
 import type {
   ImageSearchResponse,
   NewsSearchResponse,
-  SearchBatchResponse,
-  SearchResponse,
   VideoSearchResponse,
-} from '../src/schemas.js';
+} from '../src/categories/schemas.js';
+import type { SearchBatchResponse, SearchResponse } from '../src/schemas.js';
 
 describe('formatSearchResults', () => {
   it('renders numbered results with metadata', () => {
