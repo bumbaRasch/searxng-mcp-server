@@ -93,8 +93,9 @@ describe('loadConfig', () => {
     expect(warnings).toHaveLength(1); // no warning when unset
   });
 
-  it('accepts very large finite numerics and rejects Infinity', () => {
-    expect(loadConfig({ MAX_CHARS: '1e9' }, '0.0.0').maxChars).toBe(1e9);
+  it('parses finite numerics, clamps above the ceiling and rejects Infinity', () => {
+    expect(loadConfig({ MAX_CHARS: '900000' }, '0.0.0').maxChars).toBe(900_000);
+    expect(loadConfig({ MAX_CHARS: '1e9' }, '0.0.0').maxChars).toBe(1_000_000);
     expect(loadConfig({ MAX_CHARS: 'Infinity' }, '0.0.0').maxChars).toBe(25_000);
     expect(loadConfig({ MAX_CHARS: ' 5000 ' }, '0.0.0').maxChars).toBe(5000);
   });
@@ -165,7 +166,7 @@ describe('SHUTDOWN_TIMEOUT_MS', () => {
     const warnings: string[] = [];
     const config = loadConfig({ SHUTDOWN_TIMEOUT_MS: '50' }, '1.0.0', (m) => warnings.push(m));
     expect(config.shutdownTimeoutMs).toBe(5000);
-    expect(warnings.join('\n')).toMatch(/>= 100/);
+    expect(warnings.join('\n')).toMatch(/between 100 and 60000/);
   });
 });
 
@@ -332,5 +333,98 @@ describe('SEARXNG_URLS / SEARXNG_CACHE_TTL_MS (B6)', () => {
     );
     expect(cfg.cacheTtlMs).toBe(0);
     expect(warnings.join('\n')).toMatch(/SEARXNG_CACHE_TTL_MS/);
+  });
+});
+
+describe('config ceilings (warn + clamp)', () => {
+  it('clamps above-ceiling values with one warning each', () => {
+    const warnings: string[] = [];
+    const cfg = loadConfig(
+      {
+        SEARXNG_TIMEOUT_MS: '999999',
+        FETCH_TIMEOUT_MS: '999999',
+        SHUTDOWN_TIMEOUT_MS: '999999',
+        MAX_CHARS: '2000000',
+        MAX_RESPONSE_BYTES: '104857601',
+        SEARXNG_CACHE_TTL_MS: '86400001',
+      },
+      '0.0.0',
+      (message) => warnings.push(message),
+    );
+    expect(cfg.searxngTimeoutMs).toBe(300_000);
+    expect(cfg.fetchTimeoutMs).toBe(300_000);
+    expect(cfg.shutdownTimeoutMs).toBe(60_000);
+    expect(cfg.maxChars).toBe(1_000_000);
+    expect(cfg.maxResponseBytes).toBe(104_857_600);
+    expect(cfg.cacheTtlMs).toBe(86_400_000);
+    expect(warnings).toHaveLength(6);
+    expect(warnings.join('\n')).toContain('clamping');
+  });
+
+  it('accepts values exactly at the ceiling without warnings', () => {
+    const warnings: string[] = [];
+    const cfg = loadConfig(
+      {
+        SEARXNG_TIMEOUT_MS: '300000',
+        FETCH_TIMEOUT_MS: '300000',
+        SHUTDOWN_TIMEOUT_MS: '60000',
+        MAX_CHARS: '1000000',
+        MAX_RESPONSE_BYTES: '104857600',
+        SEARXNG_CACHE_TTL_MS: '86400000',
+      },
+      '0.0.0',
+      (message) => warnings.push(message),
+    );
+    expect(cfg.searxngTimeoutMs).toBe(300_000);
+    expect(cfg.fetchTimeoutMs).toBe(300_000);
+    expect(cfg.shutdownTimeoutMs).toBe(60_000);
+    expect(cfg.maxChars).toBe(1_000_000);
+    expect(cfg.maxResponseBytes).toBe(104_857_600);
+    expect(cfg.cacheTtlMs).toBe(86_400_000);
+    expect(warnings).toHaveLength(0);
+  });
+
+  it('keeps the warn-and-fallback path for negative and sub-minimum values', () => {
+    const warnings: string[] = [];
+    const cfg = loadConfig(
+      { MAX_CHARS: '-5', SEARXNG_TIMEOUT_MS: '0', SHUTDOWN_TIMEOUT_MS: '50' },
+      '0.0.0',
+      (message) => warnings.push(message),
+    );
+    expect(cfg.maxChars).toBe(25_000);
+    expect(cfg.searxngTimeoutMs).toBe(10_000);
+    expect(cfg.shutdownTimeoutMs).toBe(5_000);
+    expect(warnings).toHaveLength(3);
+    expect(warnings.join('\n')).toContain('ignoring');
+  });
+
+  it('does not clamp PORT: out-of-range still falls back to the default', () => {
+    const warnings: string[] = [];
+    const cfg = loadConfig({ PORT: '999999' }, '0.0.0', (message) => warnings.push(message));
+    expect(cfg.port).toBe(3000);
+    expect(warnings.join('\n')).toMatch(/between 1 and 65535/);
+  });
+});
+
+describe('SEARXNG_USERNAME without SEARXNG_PASSWORD', () => {
+  it('warns once and never logs the username', () => {
+    const warnings: string[] = [];
+    const cfg = loadConfig({ SEARXNG_USERNAME: 'alice' }, '0.0.0', (message) =>
+      warnings.push(message),
+    );
+    expect(cfg.searxngUsername).toBe('alice');
+    expect(cfg.searxngPassword).toBeUndefined();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('SEARXNG_USERNAME');
+    expect(warnings.join('\n')).not.toContain('alice');
+  });
+
+  it('stays silent when both credentials are set or neither is', () => {
+    const warnings: string[] = [];
+    loadConfig({ SEARXNG_USERNAME: 'alice', SEARXNG_PASSWORD: 'p' }, '0.0.0', (message) =>
+      warnings.push(message),
+    );
+    loadConfig({}, '0.0.0', (message) => warnings.push(message));
+    expect(warnings).toHaveLength(0);
   });
 });
