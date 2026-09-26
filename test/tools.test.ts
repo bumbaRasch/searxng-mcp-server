@@ -7,6 +7,7 @@ import type { LookupAll } from '../src/ssrf.js';
 import {
   fetchInput,
   fetchOutput,
+  listEnginesOutput,
   searchInput,
   searchOutput,
   searchToolOutput,
@@ -31,11 +32,17 @@ import {
   handleSearch,
   handleVideoSearch,
   registerTools,
+  renderListEngines,
   TOOL_NAMES,
 } from '../src/tools.js';
 import { asFetchLike, HTML_PAGE, jsonResponse, makeConfig } from './helpers.js';
 
 const config = makeConfig();
+
+/** Minimal /config body: one enabled engine with the given name. */
+const engineBody = (name: string): Record<string, unknown> => ({
+  engines: { e: { name, enabled: true, categories: ['general'] } },
+});
 
 describe('searchInput schema', () => {
   it('applies documented defaults via handler input', () => {
@@ -603,6 +610,72 @@ describe('handleListEngines', () => {
     const result = await handleListEngines(config, {}, { fetchImpl });
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toMatch(/Could not reach SearXNG/);
+  });
+});
+
+describe('handleListEngines instance aggregation (D15)', () => {
+  const multi = makeConfig({
+    searxngUrls: ['http://searx.test:8888', 'http://backup.test:8888'],
+  });
+
+  it('returns aggregated structured content and text for several instances', async () => {
+    const fetchImpl = asFetchLike(async (url: string) => {
+      if (url.startsWith('http://backup.test:8888')) return jsonResponse(engineBody('delta'));
+      return jsonResponse(engineBody('alpha'));
+    });
+    const result = await handleListEngines(multi, {}, { fetchImpl });
+    expect(result.isError).toBeFalsy();
+    const parsed = listEnginesOutput.parse(result.structuredContent);
+    expect(parsed.instances).toEqual([
+      { url: 'http://searx.test:8888', engines: ['alpha'], unavailableEngines: [] },
+      { url: 'http://backup.test:8888', engines: ['delta'], unavailableEngines: [] },
+    ]);
+    expect(parsed.commonEngines).toEqual([]); // disjoint engine sets intersect to nothing
+    const text = result.content[0]?.text ?? '';
+    expect(text).toContain('## Instances (2)');
+    expect(text).toContain('- http://searx.test:8888: 1 engines, 0 unavailable');
+    expect(text).not.toContain('Common engines:');
+  });
+
+  it('renders an unreachable replica without failing the tool', async () => {
+    const fetchImpl = asFetchLike(async (url: string) => {
+      if (url.startsWith('http://backup.test:8888')) return new Response('no', { status: 503 });
+      return jsonResponse(engineBody('alpha'));
+    });
+    const result = await handleListEngines(multi, {}, { fetchImpl });
+    expect(result.isError).toBeFalsy();
+    const text = result.content[0]?.text ?? '';
+    expect(text).toContain('unavailable — Could not read the SearXNG instance configuration');
+    expect(text).toContain('Common engines: alpha');
+    expect(listEnginesOutput.parse(result.structuredContent).commonEngines).toEqual(['alpha']);
+  });
+
+  it('keeps the single-instance text and structured content free of aggregation fields', async () => {
+    const fetchImpl = asFetchLike(async () => jsonResponse(engineBody('alpha')));
+    const result = await handleListEngines(config, {}, { fetchImpl });
+    expect(result.isError).toBeFalsy();
+    expect(Object.keys(listEnginesOutput.parse(result.structuredContent))).toEqual([
+      'engines',
+      'categories',
+      'counts',
+    ]);
+    expect(result.content[0]?.text).not.toContain('Instances');
+  });
+});
+
+describe('renderListEngines', () => {
+  it('renders per-instance lines from schema-legal partial entries', () => {
+    const text = renderListEngines({
+      engines: [],
+      categories: [],
+      counts: { engines: 0, categories: 0 },
+      instances: [
+        { url: 'https://a.test', error: 'down', engines: ['x'] },
+        { url: 'https://b.test' },
+      ],
+    });
+    expect(text).toContain('- https://a.test: unavailable — down');
+    expect(text).toContain('- https://b.test: 0 engines, 0 unavailable');
   });
 });
 

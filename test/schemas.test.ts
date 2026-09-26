@@ -258,6 +258,36 @@ describe('listEngines schemas', () => {
       false,
     );
   });
+
+  it('keeps the single-instance wire shape free of aggregation fields (D15)', () => {
+    const parsed = listEnginesOutput.parse({
+      engines: [{ name: 'wikipedia', categories: ['general'] }],
+      categories: ['general'],
+      counts: { engines: 1, categories: 1 },
+    });
+    expect(Object.keys(parsed)).toEqual(['engines', 'categories', 'counts']);
+  });
+
+  it('validates the multi-instance aggregation fields (D15)', () => {
+    const response = {
+      engines: [],
+      categories: [],
+      counts: { engines: 0, categories: 0 },
+      instances: [
+        { url: 'https://a.test', engines: ['x'], unavailableEngines: ['y'] },
+        { url: 'https://b.test', error: 'down' },
+      ],
+      commonEngines: ['x'],
+    };
+    expect(listEnginesOutput.safeParse(response).success).toBe(true);
+    expect(
+      listEnginesOutput.safeParse({
+        ...response,
+        instances: [{ url: 'https://a.test', engines: 'x' }],
+      }).success,
+    ).toBe(false);
+    expect(listEnginesOutput.safeParse({ ...response, commonEngines: [7] }).success).toBe(false);
+  });
 });
 
 describe('searchInput queries / min_score / detail', () => {
