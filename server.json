@@ -2,17 +2,17 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.bumbaRasch/searxng-mcp-server",
   "title": "SearXNG MCP Server",
-  "description": "Self-hosted SearXNG metasearch for MCP clients: web, image, news, video, music and page fetch.",
+  "description": "Self-hosted SearXNG metasearch for MCP clients: web, images, news, video, music, scientific publications, query suggestions and page fetch (PDF-capable).",
   "repository": {
     "url": "https://github.com/bumbaRasch/searxng-mcp-server",
     "source": "github"
   },
-  "version": "0.3.2",
+  "version": "0.4.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "searxng-mcp-server",
-      "version": "0.3.2",
+      "version": "0.4.0",
       "transport": {
         "type": "stdio"
       },
