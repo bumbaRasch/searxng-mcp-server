@@ -2,15 +2,21 @@
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
-import { parseTransportArgv } from './argv.js';
+import { cliExit, parseTransportArgv } from './argv.js';
 import { assertHttpBindSafety, loadConfig, type Config } from './config.js';
 import { startHttpServer } from './http-server.js';
 import { SERVER_NAME, createServer } from './server.js';
 import { VERSION } from './version.js';
 
-export async function main(): Promise<void> {
+export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
+  // --help/--version print to stdout and exit 0 before any server startup.
+  const exit = cliExit(argv, VERSION);
+  if (exit) {
+    console.log(exit.message);
+    process.exit(exit.code);
+  }
   // The CLI flag is explicit intent and throws on typos; env config only warns.
-  const argTransport = parseTransportArgv(process.argv.slice(2));
+  const argTransport = parseTransportArgv(argv);
   const config = loadConfig(process.env, VERSION, console.error);
   const transport = argTransport ?? config.transport;
   assertHttpBindSafety(transport, config);
