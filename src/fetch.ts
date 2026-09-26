@@ -12,12 +12,71 @@ import { assertUrlAllowed, createGuardedDispatcher, type LookupAll } from './ssr
 interface FetchOptions {
   maxChars?: number | undefined;
   offset?: number | undefined;
+  outline?: boolean | undefined;
+  section?: string | undefined;
   timeoutMs?: number | undefined;
   fetchImpl?: FetchLike | undefined;
   lookup?: LookupAll | undefined;
 }
 
 export const MAX_REDIRECTS = 5;
+
+export interface HeadingRef {
+  text: string;
+  offset: number;
+  level: number;
+}
+
+const MD_HEADING = /^#{1,6}\s+(?=\S)/;
+const FENCE_LINE = /^\s*(```|~~~)/;
+const PDF_PAGE_MARKER = /^\[Page \d+\]\r?$/;
+
+/** Outline scan (D14): ATX #-lines on the HTML branch, [Page N] markers as
+ * level-1 sections on the PDF branch. Offsets are exact line-start positions. */
+export function scanHeadings(content: string, branch: 'markdown' | 'pdf'): HeadingRef[] {
+  const headings: HeadingRef[] = [];
+  let position = 0;
+  let inFence = false;
+  for (const rawLine of content.split('\n')) {
+    const line = rawLine.replace(/\r$/, '');
+    if (branch === 'markdown') {
+      // Same fence heuristic as tightenListMarkers: headings inside code fences are text.
+      if (FENCE_LINE.test(line)) inFence = !inFence;
+      else if (!inFence) {
+        const match = MD_HEADING.exec(line);
+        if (match) {
+          headings.push({
+            text: line.slice(match[0].length).trim(),
+            offset: position,
+            level: match[0].trimEnd().length,
+          });
+        }
+      }
+    } else if (PDF_PAGE_MARKER.test(line)) {
+      headings.push({ text: line, offset: position, level: 1 });
+    }
+    position += rawLine.length + 1;
+  }
+  return headings;
+}
+
+/** Case-insensitive exact heading match → slice through the next
+ * same-or-higher-level heading (or the end). Undefined when nothing matches. */
+export function sliceSection(
+  headings: HeadingRef[],
+  content: string,
+  requested: string,
+): string | undefined {
+  const wanted = requested.trim().toLowerCase();
+  const start = headings.find((heading) => heading.text.toLowerCase() === wanted);
+  if (start === undefined) return undefined;
+  const next = headings.find(
+    (heading) => heading.offset > start.offset && heading.level <= start.level,
+  );
+  const end = next === undefined ? content.length : next.offset;
+  return content.slice(start.offset, end).trimEnd();
+}
+
 const MAX_CONTENT_TYPE_CHARS = 100;
 // Exact tokens with a parameter boundary: prefix siblings like xml-dtd or
 // jsonp are NOT textual; any application/*+xml (rss, atom, xhtml, svg…) is.
@@ -103,7 +162,8 @@ export async function fetchContent(
       let pages: number | undefined;
       let title: string | undefined;
       let byline: string | undefined;
-      if (PDF_CONTENT_TYPE.test(contentType)) {
+      const isPdf = PDF_CONTENT_TYPE.test(contentType);
+      if (isPdf) {
         const data = await readPdfResponse(response, config.maxResponseBytes);
         let extraction: PdfExtraction;
         try {
@@ -125,12 +185,29 @@ export async function fetchContent(
         byline = article.byline;
       }
 
+      // Reading controls (D14): section first — it defines the effective
+      // document; outline offsets then index that same document. The
+      // continuation window below operates on the effective content too.
+      let effective = extracted;
+      const branch = isPdf ? 'pdf' : 'markdown';
+      if (opts.section !== undefined) {
+        const slice = sliceSection(scanHeadings(extracted, branch), extracted, opts.section);
+        if (slice === undefined) {
+          // Deliberately lists nothing from the document (D14).
+          throw new FetchError(
+            `No heading matches section ${JSON.stringify(opts.section)}; call outline=true first to list headings.`,
+          );
+        }
+        effective = slice;
+      }
+
       // Continuation window (D5): slice at the offset first, then the existing cap.
       const start = Math.max(0, Math.floor(offset));
       const limit = Math.max(0, Math.floor(maxChars));
-      const { content, truncated } = truncateWithMarker(extracted.slice(start), limit);
+      const { content, truncated } = truncateWithMarker(effective.slice(start), limit);
       const result: FetchResult = { url: rawUrl, finalUrl: url.toString(), content, truncated };
-      if (start + limit < extracted.length) result.nextOffset = start + limit;
+      if (start + limit < effective.length) result.nextOffset = start + limit;
+      if (opts.outline === true) result.headings = scanHeadings(effective, branch);
       if (title) result.title = title;
       if (byline) result.byline = byline;
       if (pages !== undefined) result.pages = pages;

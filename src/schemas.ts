@@ -107,6 +107,19 @@ export const fetchInput = z.object({
     .min(0)
     .optional()
     .describe('Character offset into the extracted content, to continue reading via nextOffset.'),
+  outline: z
+    .boolean()
+    .optional()
+    .describe(
+      'Also return headings ([{text, offset, level}]: markdown #-lines; [Page N] markers for PDFs) with offsets into the scanned content.',
+    ),
+  section: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'Return only one heading region: case-insensitive exact heading match, through the next same-or-higher-level heading.',
+    ),
 });
 export type FetchInput = z.infer<typeof fetchInput>;
 
@@ -121,6 +134,17 @@ export const fetchOutput = z.object({
   pages: z.number().int().positive().optional(),
   // Present only when content remains beyond the returned window (D5).
   nextOffset: z.number().int().nonnegative().optional(),
+  // Present only when outline was requested (D14); offsets index the scanned
+  // content — the full document, or the section when section is given.
+  headings: z
+    .array(
+      z.object({
+        text: z.string(),
+        offset: z.number().int().nonnegative(),
+        level: z.number().int().min(1).max(6),
+      }),
+    )
+    .optional(),
 });
 export type FetchResult = z.infer<typeof fetchOutput>;
 

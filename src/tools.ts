@@ -118,6 +118,8 @@ export async function handleFetch(
     const result = await fetchContent(config, args.url, {
       maxChars: args.max_chars,
       offset: args.offset,
+      outline: args.outline,
+      section: args.section,
       timeoutMs: args.timeout_ms,
       fetchImpl: deps.fetchImpl,
       lookup: deps.lookup,
@@ -223,7 +225,7 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
     {
       title: 'Fetch page content',
       description: withUntrustedSuffix(
-        'Fetch a public web page and return its main content as clean Markdown. Use it to read pages found via search results.',
+        'Fetch a public web page and return its main content as clean Markdown. Use it to read pages found via search results. outline=true also returns headings ([{text, offset, level}]: markdown #-lines, or [Page N] markers for PDFs) whose offsets index the scanned content — the full document, or just the section when section is also given. section=<exact heading, case-insensitive> returns that heading through the next same-or-higher-level heading; offset/max_chars then apply inside it and nextOffset indexes the section. A section that matches nothing is an error, so list headings with outline=true first.',
       ),
       inputSchema: fetchInput,
       outputSchema: fetchOutput,

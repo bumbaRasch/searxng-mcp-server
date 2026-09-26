@@ -1,6 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
-import { fetchContent, FetchError, MAX_REDIRECTS } from '../src/fetch.js';
+import {
+  fetchContent,
+  FetchError,
+  MAX_REDIRECTS,
+  scanHeadings,
+  sliceSection,
+} from '../src/fetch.js';
 import type { FetchLike } from '../src/http.js';
 import { fetchInput, fetchOutput } from '../src/schemas.js';
 import type { LookupAll } from '../src/ssrf.js';
@@ -214,6 +220,207 @@ describe('offset continuation', () => {
     expect(past.content).toBe('');
     expect(past.nextOffset).toBeUndefined();
     expect(past.truncated).toBe(false);
+  });
+});
+
+describe('heading scanner', () => {
+  it('finds markdown ATX headings with exact offsets and levels 1-6', () => {
+    const md = ['# Top', 'para', '### Deep', '', '###### Six', 'tail'].join('\n');
+    expect(scanHeadings(md, 'markdown')).toEqual([
+      { text: 'Top', offset: 0, level: 1 },
+      { text: 'Deep', offset: 11, level: 3 },
+      { text: 'Six', offset: 21, level: 6 },
+    ]);
+  });
+
+  it('ignores pseudo-headings inside fences and 7-hash lines', () => {
+    const md = ['# A', '```python', '# not a heading', '```', 'tail', '####### seven'].join('\n');
+    expect(scanHeadings(md, 'markdown')).toEqual([{ text: 'A', offset: 0, level: 1 }]);
+  });
+
+  it('treats [Page N] markers as level-1 headings on the pdf branch', () => {
+    const pdf = 'Intro\n\n[Page 1]\nHello\n\n[Page 2]\nWorld';
+    expect(scanHeadings(pdf, 'pdf')).toEqual([
+      { text: '[Page 1]', offset: 7, level: 1 },
+      { text: '[Page 2]', offset: 23, level: 1 },
+    ]);
+  });
+
+  it('never scans #-lines on the pdf branch', () => {
+    expect(scanHeadings('[Page 1]\n# pseudo', 'pdf')).toEqual([
+      { text: '[Page 1]', offset: 0, level: 1 },
+    ]);
+  });
+});
+
+describe('section slicing', () => {
+  const md = '# A\nbody a\n## Sub\nsub body\n# B\nbody b';
+  const headings = scanHeadings(md, 'markdown');
+
+  it('slices from the matched heading to the next same-or-higher level', () => {
+    expect(sliceSection(headings, md, 'a')).toBe('# A\nbody a\n## Sub\nsub body');
+    expect(sliceSection(headings, md, 'SUB')).toBe('## Sub\nsub body');
+  });
+
+  it('runs to the end when no same-or-higher heading follows', () => {
+    const solo = '## Only\ncontent';
+    expect(sliceSection(scanHeadings(solo, 'markdown'), solo, 'only')).toBe('## Only\ncontent');
+  });
+
+  it('returns undefined when no heading matches', () => {
+    expect(sliceSection(headings, md, 'nope')).toBeUndefined();
+  });
+});
+
+describe('reading controls (outline + section)', () => {
+  const docHtml = [
+    '<!doctype html><html><head><title>Reading Guide</title></head><body><article>',
+    '<h1>Guide</h1>',
+    '<p>Intro paragraph with enough prose to survive extraction.</p>',
+    '<h2>Alpha</h2>',
+    `<p>${'alpha body text '.repeat(20)}</p>`,
+    '<h3>Alpha deep</h3>',
+    `<p>${'deep body text '.repeat(20)}</p>`,
+    '<h2>Beta</h2>',
+    `<p>${'beta body text '.repeat(30)}</p>`,
+    '</article></body></html>',
+  ].join('');
+  const docFetch = (): FetchLike => asFetchLike(async () => new Response(docHtml, { status: 200 }));
+  const pdfFixtureFetch = (): FetchLike =>
+    asFetchLike(
+      async () =>
+        new Response(PDF_BYTES, { status: 200, headers: { 'content-type': 'application/pdf' } }),
+    );
+
+  it('outline returns headings with offsets into the full extracted content', async () => {
+    const full = await fetchContent(config, 'https://example.test/guide', {
+      fetchImpl: docFetch(),
+      outline: true,
+    });
+    // Readability strips the article's top-level h1; the body headings survive.
+    expect(full.headings).toEqual([
+      { text: 'Alpha', offset: expect.any(Number), level: 2 },
+      { text: 'Alpha deep', offset: expect.any(Number), level: 3 },
+      { text: 'Beta', offset: expect.any(Number), level: 2 },
+    ]);
+    for (const heading of full.headings ?? []) {
+      expect(full.content.slice(heading.offset, heading.offset + heading.level)).toBe(
+        '#'.repeat(heading.level),
+      );
+    }
+  });
+
+  it('outline offsets stay valid under offset/max_chars slicing', async () => {
+    const full = await fetchContent(config, 'https://example.test/guide', {
+      fetchImpl: docFetch(),
+      outline: true,
+    });
+    const windowed = await fetchContent(config, 'https://example.test/guide', {
+      fetchImpl: docFetch(),
+      outline: true,
+      maxChars: 120,
+    });
+    expect(windowed.truncated).toBe(true);
+    expect(windowed.headings).toEqual(full.headings);
+  });
+
+  it('section returns one heading region, matched case-insensitively', async () => {
+    const sec = await fetchContent(config, 'https://example.test/guide', {
+      fetchImpl: docFetch(),
+      section: 'ALPHA',
+    });
+    expect(sec.content.startsWith('## Alpha')).toBe(true);
+    expect(sec.content).toContain('### Alpha deep');
+    expect(sec.content).not.toContain('## Beta');
+    expect(sec.content).not.toContain('beta body text');
+  });
+
+  it('round-trips: outline → section → offset inside the section', async () => {
+    const full = await fetchContent(config, 'https://example.test/guide', {
+      fetchImpl: docFetch(),
+      outline: true,
+    });
+    const beta = (full.headings ?? []).find((heading) => heading.text === 'Beta');
+    expect(beta).toBeDefined();
+    const sec = await fetchContent(config, 'https://example.test/guide', {
+      fetchImpl: docFetch(),
+      section: 'Beta',
+    });
+    expect(sec.content).toBe(full.content.slice(beta!.offset).trimEnd());
+
+    const head = await fetchContent(config, 'https://example.test/guide', {
+      fetchImpl: docFetch(),
+      section: 'Beta',
+      maxChars: 100,
+    });
+    expect(head.content).toBe(`${sec.content.slice(0, 79)}\n\n[Content truncated]`);
+    expect(head.truncated).toBe(true);
+    expect(head.nextOffset).toBe(100);
+
+    const tail = await fetchContent(config, 'https://example.test/guide', {
+      fetchImpl: docFetch(),
+      section: 'Beta',
+      maxChars: 100,
+      offset: 100,
+    });
+    expect(tail.content).toBe(`${sec.content.slice(100, 179)}\n\n[Content truncated]`);
+    expect(tail.nextOffset).toBe(200);
+
+    const rest = await fetchContent(config, 'https://example.test/guide', {
+      fetchImpl: docFetch(),
+      section: 'Beta',
+      maxChars: sec.content.length,
+      offset: 200,
+    });
+    expect(rest.content).toBe(sec.content.slice(200));
+    expect(rest.truncated).toBe(false);
+    expect(rest.nextOffset).toBeUndefined();
+  });
+
+  it('combines outline with section: headings index the sectioned content', async () => {
+    const combined = await fetchContent(config, 'https://example.test/guide', {
+      fetchImpl: docFetch(),
+      section: 'Alpha',
+      outline: true,
+    });
+    expect(combined.headings?.[0]).toEqual({ text: 'Alpha', offset: 0, level: 2 });
+    expect(combined.headings?.[1]).toEqual({
+      text: 'Alpha deep',
+      offset: expect.any(Number),
+      level: 3,
+    });
+  });
+
+  it('a section that matches nothing is an error listing nothing', async () => {
+    const error = await fetchContent(config, 'https://example.test/guide', {
+      fetchImpl: docFetch(),
+      section: 'Missing Section',
+    }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(FetchError);
+    expect((error as FetchError).message).toMatch(/No heading matches section/);
+    expect((error as FetchError).message).not.toContain('Alpha');
+    expect((error as FetchError).message).not.toContain('Beta');
+  });
+
+  it('sections the PDF by [Page N] marker and outlines its pages', async () => {
+    const full = await fetchContent(config, 'https://example.test/doc.pdf', {
+      fetchImpl: pdfFixtureFetch(),
+    });
+    const page2 = await fetchContent(config, 'https://example.test/doc.pdf', {
+      fetchImpl: pdfFixtureFetch(),
+      section: '[page 2]',
+    });
+    expect(page2.content).toBe('[Page 2]\nSecond page text.');
+    expect(page2.pages).toBe(2);
+
+    const outline = await fetchContent(config, 'https://example.test/doc.pdf', {
+      fetchImpl: pdfFixtureFetch(),
+      outline: true,
+    });
+    expect(outline.headings).toEqual([
+      { text: '[Page 1]', offset: 0, level: 1 },
+      { text: '[Page 2]', offset: full.content.indexOf('[Page 2]'), level: 1 },
+    ]);
   });
 });
 
@@ -495,5 +702,34 @@ describe('fetch offset schema', () => {
     expect(fetchOutput.safeParse(base).success).toBe(true);
     expect(fetchOutput.safeParse({ ...base, nextOffset: 0 }).success).toBe(true);
     expect(fetchOutput.safeParse({ ...base, nextOffset: -1 }).success).toBe(false);
+  });
+
+  it('parses outline and section, rejecting an empty section and non-boolean outline', () => {
+    expect(fetchInput.safeParse({ url: 'https://x.test', outline: true }).success).toBe(true);
+    expect(fetchInput.safeParse({ url: 'https://x.test', outline: false }).success).toBe(true);
+    expect(fetchInput.safeParse({ url: 'https://x.test', outline: 'yes' }).success).toBe(false);
+    expect(fetchInput.safeParse({ url: 'https://x.test', section: 'Intro' }).success).toBe(true);
+    expect(fetchInput.safeParse({ url: 'https://x.test', section: '' }).success).toBe(false);
+  });
+
+  it('keeps headings optional with int offsets and levels 1-6 in fetchOutput', () => {
+    const base = {
+      url: 'https://x.test',
+      finalUrl: 'https://x.test/',
+      content: 'text',
+      truncated: false,
+    };
+    expect(
+      fetchOutput.safeParse({ ...base, headings: [{ text: 'A', offset: 0, level: 6 }] }).success,
+    ).toBe(true);
+    expect(
+      fetchOutput.safeParse({ ...base, headings: [{ text: 'A', offset: -1, level: 1 }] }).success,
+    ).toBe(false);
+    expect(
+      fetchOutput.safeParse({ ...base, headings: [{ text: 'A', offset: 1.5, level: 1 }] }).success,
+    ).toBe(false);
+    expect(
+      fetchOutput.safeParse({ ...base, headings: [{ text: 'A', offset: 0, level: 7 }] }).success,
+    ).toBe(false);
   });
 });
