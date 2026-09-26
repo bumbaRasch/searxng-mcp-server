@@ -332,19 +332,44 @@ function htmlFallbackEligible(config: Config, error: unknown): boolean {
   return error.status === 403 || error.badJson;
 }
 
+const clampWarned = new WeakSet<Config>();
+
+function warnResultClampOnce(config: Config, requested: number, ceiling: number): void {
+  if (clampWarned.has(config)) return;
+  clampWarned.add(config);
+  console.error(
+    `SEARXNG_MAX_RESULTS: clamping request max_results ${requested} to the configured ceiling ${ceiling}`,
+  );
+}
+
+/** D16 operator defaults, applied in the params layer before URL building and
+ * slicing: explicit request values always win; the ceiling clamps max_results. */
+export function applyOperatorDefaults(config: Config, params: SearchParams): SearchParams {
+  const ceiling = config.maxResults;
+  const clamped = ceiling !== undefined && params.maxResults > ceiling;
+  if (clamped) warnResultClampOnce(config, params.maxResults, ceiling);
+  return {
+    ...params,
+    language: params.language ?? config.defaultLanguage,
+    safesearch: params.safesearch ?? config.defaultSafesearch,
+    maxResults: clamped ? ceiling : params.maxResults,
+  };
+}
+
 export async function search(
   config: Config,
   params: SearchParams,
   opts: ClientOptions = {},
 ): Promise<SearchResponse> {
+  const effective = applyOperatorDefaults(config, params);
   let raw: unknown;
   try {
-    raw = await fetchSearchJson(config, params, opts);
+    raw = await fetchSearchJson(config, effective, opts);
   } catch (error) {
     if (!htmlFallbackEligible(config, error)) throw error;
-    raw = await cached(opts.cache, 'GET', htmlSearchUrl(config.searxngUrl, params), () =>
-      fetchSearchHtml(config, params, opts).then((html) =>
-        parseSearchResultsHtml(html, params.query),
+    raw = await cached(opts.cache, 'GET', htmlSearchUrl(config.searxngUrl, effective), () =>
+      fetchSearchHtml(config, effective, opts).then((html) =>
+        parseSearchResultsHtml(html, effective.query),
       ),
     ).catch((fallbackError: unknown) => {
       throw new SearxngError(
@@ -353,7 +378,7 @@ export async function search(
       );
     });
   }
-  return mapSearchResponse(raw, params.maxResults, params.minScore);
+  return mapSearchResponse(raw, effective.maxResults, effective.minScore);
 }
 
 /** Batch fan-out: concurrent queries with the shared timeout, input-ordered results (D6). */
@@ -376,8 +401,9 @@ export async function runCategorySearch<R>(
   params: SearchParams,
   opts: ClientOptions = {},
 ): Promise<CategoryEnvelope<R>> {
-  const raw = await fetchSearchJson(config, params, opts);
-  return buildCategoryEnvelope(raw, params.maxResults, definition.projectResult);
+  const effective = applyOperatorDefaults(config, params);
+  const raw = await fetchSearchJson(config, effective, opts);
+  return buildCategoryEnvelope(raw, effective.maxResults, definition.projectResult);
 }
 
 export function mapImageResponse(raw: unknown, maxResults: number): ImageSearchResponse {
@@ -401,8 +427,9 @@ export async function imageSearch(
   params: SearchParams,
   opts: ClientOptions = {},
 ): Promise<ImageSearchResponse> {
-  const raw = await fetchSearchJson(config, params, opts);
-  return mapImageResponse(raw, params.maxResults);
+  const effective = applyOperatorDefaults(config, params);
+  const raw = await fetchSearchJson(config, effective, opts);
+  return mapImageResponse(raw, effective.maxResults);
 }
 
 export async function newsSearch(
@@ -410,8 +437,9 @@ export async function newsSearch(
   params: SearchParams,
   opts: ClientOptions = {},
 ): Promise<NewsSearchResponse> {
-  const raw = await fetchSearchJson(config, params, opts);
-  return mapNewsResponse(raw, params.maxResults);
+  const effective = applyOperatorDefaults(config, params);
+  const raw = await fetchSearchJson(config, effective, opts);
+  return mapNewsResponse(raw, effective.maxResults);
 }
 
 export async function videoSearch(
@@ -419,8 +447,9 @@ export async function videoSearch(
   params: SearchParams,
   opts: ClientOptions = {},
 ): Promise<VideoSearchResponse> {
-  const raw = await fetchSearchJson(config, params, opts);
-  return mapVideoResponse(raw, params.maxResults);
+  const effective = applyOperatorDefaults(config, params);
+  const raw = await fetchSearchJson(config, effective, opts);
+  return mapVideoResponse(raw, effective.maxResults);
 }
 
 export async function musicSearch(
@@ -428,8 +457,9 @@ export async function musicSearch(
   params: SearchParams,
   opts: ClientOptions = {},
 ): Promise<MusicSearchResponse> {
-  const raw = await fetchSearchJson(config, params, opts);
-  return mapMusicResponse(raw, params.maxResults);
+  const effective = applyOperatorDefaults(config, params);
+  const raw = await fetchSearchJson(config, effective, opts);
+  return mapMusicResponse(raw, effective.maxResults);
 }
 
 function instanceHeaders(config: Config): Record<string, string> {

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  applyOperatorDefaults,
   buildSearchParams,
   imageSearch,
   mapImageResponse,
@@ -12,6 +13,7 @@ import {
   mapEnginesResponse,
   musicSearch,
   newsSearch,
+  runCategorySearch,
   search,
   searchBatch,
   SearxngError,
@@ -38,6 +40,7 @@ import {
 import { asFetchLike, jsonResponse, makeConfig } from './helpers.js';
 import type { FetchLike } from '../src/http.js';
 import { TtlCache } from '../src/cache.js';
+import { generalCategory } from '../src/categories/general.js';
 
 describe('buildSearchParams', () => {
   it('always sets q and format=json', () => {
@@ -1029,6 +1032,130 @@ describe('HTML fallback (D13)', () => {
       imageSearch(fallbackConfig, { query: 'q', maxResults: 10 }, { fetchImpl }),
     ).rejects.toThrow(/search\.formats/);
     expect(calls).toBe(1);
+  });
+});
+
+describe('operator defaults (D16)', () => {
+  const thirtyResults = Array.from({ length: 30 }, (_, i) => ({
+    title: `t${i}`,
+    url: `https://t${i}.test`,
+    content: 'c',
+  }));
+  const raw = { query: 'q', results: thirtyResults };
+
+  function recordingFetch(seen: string[]): FetchLike {
+    return asFetchLike(async (url: string) => {
+      seen.push(url);
+      return jsonResponse(raw);
+    });
+  }
+
+  it('applies language/safesearch defaults only when the request omits them', async () => {
+    const defaultsConfig = makeConfig({ defaultLanguage: 'de', defaultSafesearch: 2 });
+    const seen: string[] = [];
+    await search(
+      defaultsConfig,
+      { query: 'q', maxResults: 10 },
+      { fetchImpl: recordingFetch(seen) },
+    );
+    expect(seen[0]).toContain('language=de');
+    expect(seen[0]).toContain('safesearch=2');
+
+    seen.length = 0;
+    await search(
+      defaultsConfig,
+      { query: 'q', maxResults: 10, language: 'fr', safesearch: 0 },
+      { fetchImpl: recordingFetch(seen) },
+    );
+    expect(seen[0]).toContain('language=fr');
+    expect(seen[0]).toContain('safesearch=0');
+    expect(seen[0]).not.toContain('language=de');
+    expect(seen[0]).not.toContain('safesearch=2');
+  });
+
+  it('leaves the request untouched when nothing is configured', () => {
+    const params = { query: 'q', maxResults: 10, language: 'fr', safesearch: 1 } as const;
+    expect(applyOperatorDefaults(makeConfig(), params)).toEqual(params);
+    expect(applyOperatorDefaults(makeConfig(), { query: 'q', maxResults: 10 })).toEqual({
+      query: 'q',
+      maxResults: 10,
+    });
+  });
+
+  it('clamps request max_results to the configured ceiling', async () => {
+    const ceilingConfig = makeConfig({ maxResults: 5 });
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const res = await search(
+        ceilingConfig,
+        { query: 'q', maxResults: 50 },
+        {
+          fetchImpl: recordingFetch([]),
+        },
+      );
+      expect(res.results).toHaveLength(5);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('warns once per config when clamping, never at or below it', async () => {
+    const ceilingConfig = makeConfig({ maxResults: 5 });
+    const warnings: string[] = [];
+    const spy = vi
+      .spyOn(console, 'error')
+      .mockImplementation((message: unknown) => warnings.push(String(message)));
+    try {
+      const fetchImpl = recordingFetch([]);
+      const atCeiling = await search(ceilingConfig, { query: 'q', maxResults: 5 }, { fetchImpl });
+      expect(atCeiling.results).toHaveLength(5);
+      expect(warnings).toHaveLength(0);
+      await search(ceilingConfig, { query: 'q', maxResults: 50 }, { fetchImpl });
+      await search(ceilingConfig, { query: 'q', maxResults: 50 }, { fetchImpl });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/SEARXNG_MAX_RESULTS.*50.*5/s);
+  });
+
+  it('flows into batch and category searches', async () => {
+    const defaultsConfig = makeConfig({ defaultLanguage: 'de', maxResults: 2 });
+    const seen: string[] = [];
+    const warnings: string[] = [];
+    const spy = vi
+      .spyOn(console, 'error')
+      .mockImplementation((message: unknown) => warnings.push(String(message)));
+    try {
+      const batch = await searchBatch(
+        defaultsConfig,
+        ['alpha', 'beta'],
+        { query: 'unused', maxResults: 50 },
+        { fetchImpl: recordingFetch(seen) },
+      );
+      expect(batch.batch.map((entry) => entry.results)).toEqual([
+        expect.arrayContaining([expect.objectContaining({ title: 't0' })]),
+        expect.arrayContaining([expect.objectContaining({ title: 't0' })]),
+      ]);
+      expect(batch.batch[0]?.results).toHaveLength(2);
+
+      const category = await runCategorySearch(
+        generalCategory,
+        defaultsConfig,
+        { query: 'q', maxResults: 50 },
+        { fetchImpl: recordingFetch(seen) },
+      );
+      expect(category.results).toHaveLength(2);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(seen).toHaveLength(3);
+    expect(seen[0]).toContain('language=de');
+    expect(seen[1]).toContain('language=de');
+    expect(seen[2]).toContain('language=de');
+    // the clamp warning fired once for the whole config despite three requests
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/SEARXNG_MAX_RESULTS/);
   });
 });
 

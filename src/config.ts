@@ -28,6 +28,12 @@ export interface Config {
   allowedOrigins: string[];
   /** Retry JSON-disabled instances via their HTML UI for `search` (`SEARXNG_HTML_FALLBACK`, D13). */
   htmlFallback: boolean;
+  /** Applied when a search request omits `language` (`SEARXNG_DEFAULT_LANGUAGE`, D16). */
+  defaultLanguage?: string;
+  /** Applied when a search request omits `safesearch` (`SEARXNG_DEFAULT_SAFESEARCH`, D16). */
+  defaultSafesearch?: 0 | 1 | 2;
+  /** Ceiling on request `max_results`; larger requests clamp (`SEARXNG_MAX_RESULTS`, D16). */
+  maxResults?: number;
 }
 
 type Env = Record<string, string | undefined>;
@@ -90,6 +96,29 @@ function boolEnv(env: Env, key: string, fallback: boolean, warn: Warn): boolean 
     `${key}: ignoring "${raw.trim()}" (expected 1/true/yes/on or 0/false/no/off), using ${fallback}`,
   );
   return fallback;
+}
+
+/** Optional integer env read (unset when absent); invalid values warn and unset. */
+function optionalIntEnv(env: Env, key: string, warn: Warn, min: number): number | undefined {
+  const raw = env[key];
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < min) {
+    warn(`${key}: ignoring "${raw.trim()}" (expected an integer >= ${min}), unset`);
+    return undefined;
+  }
+  return Math.floor(value);
+}
+
+/** `SEARXNG_DEFAULT_SAFESEARCH`: 0|1|2; anything else warns and stays unset (D16). */
+function safesearchDefaultEnv(env: Env, warn: Warn): 0 | 1 | 2 | undefined {
+  const raw = env.SEARXNG_DEFAULT_SAFESEARCH?.trim();
+  if (raw === undefined || raw === '') return undefined;
+  if (raw === '0') return 0;
+  if (raw === '1') return 1;
+  if (raw === '2') return 2;
+  warn(`SEARXNG_DEFAULT_SAFESEARCH: ignoring "${raw}" (expected 0, 1 or 2), unset`);
+  return undefined;
 }
 
 function strEnv(env: Env, key: string, fallback: string): string {
@@ -242,6 +271,13 @@ export function loadConfig(env: Env, version: string, warn: Warn = () => {}): Co
     allowedOrigins: listEnv(env, 'SEARXNG_ALLOWED_ORIGINS'),
     htmlFallback: boolEnv(env, 'SEARXNG_HTML_FALLBACK', false, warn),
   };
+  // Optional D16 operator defaults: assigned only when configured (exactOptionalPropertyTypes).
+  const defaultLanguage = strEnv(env, 'SEARXNG_DEFAULT_LANGUAGE', '').trim();
+  if (defaultLanguage !== '') config.defaultLanguage = defaultLanguage;
+  const defaultSafesearch = safesearchDefaultEnv(env, warn);
+  if (defaultSafesearch !== undefined) config.defaultSafesearch = defaultSafesearch;
+  const maxResults = optionalIntEnv(env, 'SEARXNG_MAX_RESULTS', warn, 1);
+  if (maxResults !== undefined) config.maxResults = maxResults;
   if (env.SEARXNG_USERNAME) {
     config.searxngUsername = env.SEARXNG_USERNAME;
     if (!env.SEARXNG_PASSWORD) {
