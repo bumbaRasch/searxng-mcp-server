@@ -14,9 +14,9 @@ instance to MCP clients (OpenCode, Claude, Cursor, …). It provides nine tools:
 - `music_search` — find music, including direct audio file links when available.
 - `paper_search` — find scientific publications: abstracts, authors,
   journal/DOI metadata and direct PDF links.
-- `fetch_content` — fetch a URL (HTML page or text PDF) and return clean
-  Markdown for LLM consumption, with `outline`/`section` reading controls
-  (D14) and offset continuation for long pages.
+- `fetch_content` — fetch a URL (HTML page, textual body or text PDF) and
+  return clean Markdown for LLM consumption, with `outline`/`section` reading
+  controls (D14) and offset continuation for long pages.
 - `autocomplete` — query suggestions for a prefix (`/autocompleter`).
 - `list_engines` — the engines and categories enabled on the instance
   (`/config`); with several `SEARXNG_URLS` instances configured, per-instance
@@ -119,9 +119,9 @@ to the pre-aggregation output.
 | `src/autocompleter.ts` | `/autocompleter` client, flat-array suggestion projection and markdown rendering |
 | `src/http.ts` | `FetchLike`/`HttpResponseLike` seams + capped stream reading |
 | `src/ssrf.ts` | IP classification + guarded undici dispatcher (anti-rebind) |
-| `src/fetch.ts` | fetch orchestration: redirect loop + SSRF wiring + HTML/PDF extraction pipeline + offset windows + heading scan/section slice (D14) |
+| `src/fetch.ts` | fetch orchestration: redirect loop + SSRF wiring + HTML/PDF extraction pipeline (D17: HTML-only Readability, other textual bodies verbatim) + offset windows + heading scan/section slice (D14) |
 | `src/pdf.ts` | PDF branch of `fetch_content`: capped raw-byte reader + unpdf text extraction (`[Page N]` sections) |
-| `src/extract.ts` | Readability extraction, DOM cleaning/absolutization, text stripping |
+| `src/extract.ts` | Readability extraction, DOM cleaning/absolutization, text stripping; guards tagless input that parses without a `documentElement` (D17) |
 | `src/markdown.ts` | turndown HTML→Markdown + output truncation |
 | `src/format.ts` | Markdown rendering + untrusted-content wrapping/sanitization + tool error text |
 | `src/cache.ts` | opt-in TTL + LRU cache for instance-bound GETs (default off) |
@@ -200,7 +200,12 @@ no API keys.
   (routed to the unpdf text-extraction branch instead of Readability) —
   exact tokens with a parameter boundary, so prefix siblings like
   `application/xml-dtd` are refused; responses without a Content-Type
-  header are treated as textual; output capped at `MAX_CHARS` (an `offset`
+  header are treated as textual and keep the legacy Readability path; among
+  the allowed textual types only `text/html` and `application/xhtml+xml` go
+  through Readability, every other textual body (plain text, Markdown, JSON,
+  feeds) passes through verbatim (D17) — Readability's constructor rejects a
+  tagless document, and re-rendering source text through it mangles the
+  original; output capped at `MAX_CHARS` (an `offset`
   window may continue it); per-call `timeout_ms` bounded to 120 s.
   Residual risk: HTML parsing (Readability + turndown) and PDF text
   extraction run synchronously on the event loop — a hostile document can

@@ -27,6 +27,10 @@ describe('extractArticle', () => {
     expect(extractArticle('', 'https://x.test')).toEqual({});
   });
 
+  it('returns an empty object for tagless text that parses without a document element', () => {
+    expect(extractArticle('plain text with no markup at all', 'https://x.test')).toEqual({});
+  });
+
   it('extracts a byline when the article has one', () => {
     const html = `<!doctype html><html><head><title>Post</title></head><body>
       <article>
@@ -148,6 +152,12 @@ describe('stripToText', () => {
 
   it('returns an empty string for empty input', () => {
     expect(stripToText('')).toBe('');
+  });
+
+  it('returns tagless text unchanged when parsing produces no document element', () => {
+    expect(stripToText('plain text with no markup at all')).toBe(
+      'plain text with no markup at all',
+    );
   });
 
   it('skips script, style, noscript and template text', () => {
