@@ -13,7 +13,7 @@ export default defineConfig({
       exclude: ['src/index.ts'],
       reporter: ['text', 'html'],
       thresholds: {
-        autoUpdate: true,
+        autoUpdate: false,
         lines: 99.2,
         functions: 94.37,
         branches: 89.16,
