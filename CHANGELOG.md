@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-26
+
+### Added
+
+- Reading controls in `fetch_content` ([#60](https://github.com/bumbaRasch/searxng-mcp-server/pull/60)): `outline: true` returns `headings` — `{text, offset, level}` entries whose offsets point into the scanned content (markdown `#`-lines on the HTML branch; `[Page N]` page markers as level-1 sections on the PDF branch) — and `section` returns one heading region only: case-insensitive exact heading match, through the next same-or-higher-level heading, with `offset`/`max_chars` applying inside it and `nextOffset` relative to the sectioned content. A `section` that matches nothing is a sanitized error; call `outline` first to list headings.
+- Opt-in HTML fallback for JSON-disabled instances ([#61](https://github.com/bumbaRasch/searxng-mcp-server/pull/61)): `SEARXNG_HTML_FALLBACK` (default `false`). When a `search` request fails with 403 (limiter / JSON API disabled) or answers a non-JSON body and the flag is on, the client retries the same query without `format=json` and parses the result page with a new linkedom-based parser (`src/html-results.ts`, the `simple` theme's `article.result` structure), capped at 30 sanitized results; the output envelope is identical to the JSON path with empty `suggestions`/`unresponsiveEngines`. The `search` tool only.
+- Operator defaults ([#62](https://github.com/bumbaRasch/searxng-mcp-server/pull/62)): `SEARXNG_DEFAULT_LANGUAGE` and `SEARXNG_DEFAULT_SAFESEARCH` (`0`/`1`/`2`; invalid values ignored with a warning) apply when a request omits the parameter, and `SEARXNG_MAX_RESULTS` clamps a larger request `max_results` with a once-per-process warning. Explicit request values always win.
+- Instance aggregation in `list_engines` ([#63](https://github.com/bumbaRasch/searxng-mcp-server/pull/63)): with more than one instance configured (`SEARXNG_URLS`), `/config` is fetched from every instance in parallel and the output gains `instances` (per-instance `engines`/`unavailableEngines`, or an `error` entry for an unreachable replica — never a tool failure) plus `commonEngines`, the intersection of selectable engines across reachable instances. Single-instance output is unchanged.
+- CLI flags ([#58](https://github.com/bumbaRasch/searxng-mcp-server/pull/58)): `--help` (usage to stdout) and `--version` (print the version) both exit 0 before any server startup.
+
+### Changed
+
+- Config ceilings with warn + clamp ([#58](https://github.com/bumbaRasch/searxng-mcp-server/pull/58)): `SEARXNG_TIMEOUT_MS` ≤ 300000, `FETCH_TIMEOUT_MS` ≤ 300000, `SHUTDOWN_TIMEOUT_MS` ≤ 60000, `MAX_CHARS` ≤ 1000000, `MAX_RESPONSE_BYTES` ≤ 104857600 and `SEARXNG_CACHE_TTL_MS` ≤ 86400000 clamp out-of-range values to the ceiling with a warning (same path as the negative-value fallback); `SEARXNG_USERNAME` without `SEARXNG_PASSWORD` logs a startup warning instead of silently sending Basic auth with an empty password.
+- `schemas.ts` slimmed to cross-tool atoms ([#59](https://github.com/bumbaRasch/searxng-mcp-server/pull/59)): the per-category schema handles moved to `src/categories/schemas.ts` (exported names keep their spellings); `schemas.ts` keeps the bespoke search/fetch/list-engines schemas, mappers and `z.infer` types.
+- npm listing text and version sync guard ([#58](https://github.com/bumbaRasch/searxng-mcp-server/pull/58)): `package.json` `description` now names the 9-tool surface, and a smoke test keeps both `server.json` `version` fields equal to it.
+- Coverage thresholds pinned ([#56](https://github.com/bumbaRasch/searxng-mcp-server/pull/56)): `coverage.thresholds.autoUpdate: false` with floors at lines 99.2 / functions 94.37 / branches 89.16 / statements 96.95 — no generated churn on local runs.
+- Nightly e2e ([#57](https://github.com/bumbaRasch/searxng-mcp-server/pull/57)): the CI `e2e` job gains a daily `schedule` trigger (04:00 UTC) alongside `workflow_dispatch`; SSRF assertions untouched.
+
+### BREAKING
+
+No 0.4.x compatibility shims (pre-1.0 minor, per the release policy; the MCP wire surface is unchanged):
+
+- Per-category schema handles moved from `src/schemas.ts` to `src/categories/schemas.ts` — import paths change, names do not.
+- Out-of-range config values are now clamped to the new ceilings (with a warning) instead of being accepted verbatim.
+
 ## [0.4.0] - 2026-09-26
 
 ### Added
@@ -103,7 +128,8 @@ No 0.3.x compatibility shims (pre-1.0 minor, per the release policy):
 - Bundled SearXNG Docker stack (pinned image, loopback-only) and end-to-end verification script.
 - 260 unit tests, CI matrix (Node 22.19/24/26), type-aware linting, coverage.
 
-[Unreleased]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/bumbaRasch/searxng-mcp-server/releases/tag/v0.3.1

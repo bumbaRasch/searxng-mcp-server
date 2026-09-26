@@ -25,8 +25,8 @@ and registration from it.
    `categoryDefinitions`. That is the only edit outside the new file: input
    schemas are composed from the shared atoms (`categoryInputSchema`, keyed on
    `upstream.supportsTimeRange`) and the output schema comes from the
-   definition itself; optional convenience handles may live in
-   `src/schemas.ts`. `registerTools` and `TOOL_NAMES` pick the tool up
+   definition itself; optional convenience handles live in
+   `src/categories/schemas.ts`. `registerTools` and `TOOL_NAMES` pick the tool up
    automatically. If the category needs more than the shared envelope, model it
    as a bespoke slice next to the loop in `src/tools.ts` (the way `search`
    keeps its answers/corrections/infoboxes).

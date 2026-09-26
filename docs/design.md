@@ -15,10 +15,12 @@ instance to MCP clients (OpenCode, Claude, Cursor, …). It provides nine tools:
 - `paper_search` — find scientific publications: abstracts, authors,
   journal/DOI metadata and direct PDF links.
 - `fetch_content` — fetch a URL (HTML page or text PDF) and return clean
-  Markdown for LLM consumption, with offset continuation for long pages.
+  Markdown for LLM consumption, with `outline`/`section` reading controls
+  (D14) and offset continuation for long pages.
 - `autocomplete` — query suggestions for a prefix (`/autocompleter`).
 - `list_engines` — the engines and categories enabled on the instance
-  (`/config`).
+  (`/config`); with several `SEARXNG_URLS` instances configured, per-instance
+  engines plus their common intersection (D15).
 
 The server speaks MCP over **stdio** (default) or **Streamable HTTP**
 (opt-in, `SEARXNG_TRANSPORT=http` / `--transport http`); the companion
@@ -88,6 +90,21 @@ everywhere — and exhaustion surfaces the last error. An opt-in TTL cache
 GETs. `fetch_content` uses neither: its targets are arbitrary web URLs, not
 the operator's instances.
 
+Three more instance-facing behaviors (v0.5.0 decisions): with
+`SEARXNG_HTML_FALLBACK` on (default off, D13), a `search` that fails with 403
+(limiter / JSON API disabled) or answers a non-JSON body is retried without
+`format=json` and the `simple`-theme result page is parsed into the JSON
+payload's shape by `src/html-results.ts` (linkedom, capped at 30 results) —
+for public instances that disable the JSON API. Operator defaults (D16:
+`SEARXNG_DEFAULT_LANGUAGE`, `SEARXNG_DEFAULT_SAFESEARCH`, `SEARXNG_MAX_RESULTS`)
+are applied in the params layer — a request value always wins, and an
+over-ceiling `max_results` clamps with a once-per-process warning. And with
+more than one instance configured, `list_engines` fans `/config` out to all
+of them in parallel, reporting per-instance `instances` entries (an
+unreachable replica degrades to an error entry, never a tool failure) plus
+the `commonEngines` intersection (D15); a single instance is byte-identical
+to the pre-aggregation output.
+
 ## Module layout
 
 | Module | Responsibility |
@@ -96,30 +113,31 @@ the operator's instances.
 | `src/server.ts` | `createServer()` — transport-agnostic server factory |
 | `src/tools.ts` | MCP tool registration (registry loop + bespoke tools) + error boundary (sanitizes reflected strings) |
 | `src/categories/` | category registry: `types.ts` (`CategoryDeclaration` + `defineCategory`), `shared.ts` (argument atoms, envelope builder, projection bounds, marker sanitizers), one file per category, `index.ts` aggregation |
-| `src/schemas.ts` | zod schemas: bespoke tool schemas (search/fetch/list-engines) and convenience handles over the registry-generated category schemas (the atoms live in `categories/shared.ts`); `to*SearchParams` mappers; `z.infer` types used everywhere |
-| `src/searxng.ts` | SearXNG HTTP client: failover wrapper, defensive response projection, batch search, `/config` |
+| `src/schemas.ts` | cross-tool zod atoms: bespoke tool schemas (search/fetch/list-engines incl. the D14 reading controls), `to*SearchParams` mappers, `z.infer` types; per-category schema handles live in `categories/schemas.ts` |
+| `src/searxng.ts` | SearXNG HTTP client: failover wrapper, HTML-fallback retry (D13), operator defaults/`max_results` ceiling layer (D16), defensive response projection, batch search, `/config` fan-out + aggregation (D15) |
+| `src/html-results.ts` | opt-in HTML fallback parser (D13): linkedom extraction of the `simple` theme's `article.result` structure into the JSON-API result shape, capped at 30 sanitized items |
 | `src/autocompleter.ts` | `/autocompleter` client, flat-array suggestion projection and markdown rendering |
 | `src/http.ts` | `FetchLike`/`HttpResponseLike` seams + capped stream reading |
 | `src/ssrf.ts` | IP classification + guarded undici dispatcher (anti-rebind) |
-| `src/fetch.ts` | fetch orchestration: redirect loop + SSRF wiring + HTML/PDF extraction pipeline + offset windows |
+| `src/fetch.ts` | fetch orchestration: redirect loop + SSRF wiring + HTML/PDF extraction pipeline + offset windows + heading scan/section slice (D14) |
 | `src/pdf.ts` | PDF branch of `fetch_content`: capped raw-byte reader + unpdf text extraction (`[Page N]` sections) |
 | `src/extract.ts` | Readability extraction, DOM cleaning/absolutization, text stripping |
 | `src/markdown.ts` | turndown HTML→Markdown + output truncation |
 | `src/format.ts` | Markdown rendering + untrusted-content wrapping/sanitization + tool error text |
 | `src/cache.ts` | opt-in TTL + LRU cache for instance-bound GETs (default off) |
-| `src/config.ts` | env parsing + defaults (warns on stderr for invalid values; refuses insecure non-localhost HTTP binds) |
-| `src/argv.ts` | `--transport stdio\|http` CLI flag parsing (throws on typos — explicit intent) |
+| `src/config.ts` | env parsing + defaults (warns on stderr for invalid values; warn+clamp ceilings on timeout/size/TTL values and operator defaults, D16; refuses insecure non-localhost HTTP binds) |
+| `src/argv.ts` | `--transport stdio\|http` CLI flag parsing (throws on typos — explicit intent) + `--help`/`--version` (stdout, exit 0, before any startup) |
 | `src/http-server.ts` | Streamable HTTP stack: `createMcpHandler` (modern-only), bearer gate, Host/Origin validation, passive `/healthz`, `node:http` wiring |
 | `src/icon.ts` | MCP `icons` metadata (self-contained data URIs) for the server and every tool |
 | `src/version.ts` | `VERSION` constant (kept in sync with package.json by a test) |
 
 Dependency direction (per-module, as imported): `config`, `http`, `ssrf`,
-`extract`, `markdown`, `version`, `icon`, `cache` and the registry core
-(`categories/types` + `categories/shared`, mutually type-only) are leaves.
-Above them: the category files → `categories/shared`/`types` (paper also
-reuses `general`'s date helper); `schemas` → categories; `format` →
-categories + `schemas`; `searxng` → `cache`/`categories`/`http`/`config`/
-`schemas`; `autocompleter` → `searxng`/`cache`/`format`/`config`;
+`extract`, `markdown`, `version`, `icon`, `cache`, `html-results` and the
+registry core (`categories/types` + `categories/shared`, mutually type-only)
+are leaves. Above them: the category files →
+`categories/shared`/`types` (paper also reuses `general`'s date helper);
+`schemas` → categories; `format` → categories + `schemas`; `searxng` →
+`cache`/`categories`/`html-results`/`http`/`config`/`schemas`; `autocompleter` → `searxng`/`cache`/`format`/`config`;
 `pdf` → `http`; `fetch` → `config`/`ssrf`/`extract`/`markdown`/`pdf`/
 `http`/`schemas`; `tools` → `config`/`fetch`/`format`/`schemas`/`searxng`/
 `autocompleter`/`categories` plus type-only imports of `http` (`FetchLike`),
@@ -151,7 +169,8 @@ Hard-to-discover facts encoded in `src/searxng.ts` (verified against
   `X-Requested-With: XMLHttpRequest` header it returns a flat JSON array of
   strings, without it an OpenSearch-shaped `[prefix, [results], …]` payload
   (facts verified against `searx/webapp.py`).
-- 403 usually means `format=json` is not enabled in `search.formats`.
+- 403 usually means `format=json` is not enabled in `search.formats`
+  (or, with `SEARXNG_HTML_FALLBACK` on, triggers the HTML fallback, D13).
 
 Engine-specific credentials (e.g. the OpenAlex `api_key`, which replaced the
 deprecated `mailto` polite pool in February 2026 — see
@@ -242,13 +261,14 @@ no API keys.
 Deliberate scope cuts, with the reasoning (stable — do not relitigate
 without new evidence):
 
-- **Section/paragraph-range addressing in `fetch_content`** — the `offset`
-  window plus in-content headings cover the read-long-docs scenario without
-  a second addressing scheme.
-- **HTML scraping fallback for JSON-disabled instances** — the bundled
-  compose stack ships a JSON-enabled SearXNG, and instance failover (403
-  moves to the next `SEARXNG_URLS` entry) covers the rest; parsing result
-  HTML would conflict with the security posture.
+- **Arbitrary paragraph-range addressing in `fetch_content`** — v0.5.0
+  shipped heading-level addressing (`outline`/`section`, D14); numeric
+  windows beyond the existing `offset` and paragraph-range schemes remain
+  out of scope.
+- **General scraping / JS-rendering tiers for `search`** — the opt-in HTML
+  fallback (D13) covers exactly one case, a JSON-disabled instance, parsed
+  defensively and capped at 30 results; full scraping tiers (JS rendering,
+  solver services) stay out of scope.
 - **OAuth for the HTTP transport** — a static bearer token suffices for a
   self-hosted, single-operator deployment.
 - **Site crawling / `crawl_site`, JavaScript rendering** — out of scope by
