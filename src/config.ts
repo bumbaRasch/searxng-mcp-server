@@ -39,6 +39,13 @@ const DEFAULT_MAX_CHARS = 25_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
 const MIN_SHUTDOWN_TIMEOUT_MS = 100;
+/** Ceilings (warn + clamp) keeping a stray env value from wedging the server. */
+const MAX_SEARXNG_TIMEOUT_MS = 300_000;
+const MAX_FETCH_TIMEOUT_MS = 300_000;
+const MAX_SHUTDOWN_TIMEOUT_MS = 60_000;
+const MAX_MAX_CHARS = 1_000_000;
+const MAX_MAX_RESPONSE_BYTES = 104_857_600;
+const MAX_CACHE_TTL_MS = 86_400_000;
 const DEFAULT_TRANSPORT: Transport = 'stdio';
 const DEFAULT_HTTP_HOST = '127.0.0.1';
 const DEFAULT_HTTP_PORT = 3000;
@@ -46,6 +53,8 @@ const MAX_PORT = 65_535;
 /** Hosts considered local: only these may serve HTTP without an auth token. */
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
 
+/** Integer env read. Above `max` the value warns and CLAMPS to the ceiling,
+ * unless `clamp` is false (then it falls back like any other invalid value). */
 function intEnv(
   env: Env,
   key: string,
@@ -53,14 +62,21 @@ function intEnv(
   warn: Warn,
   min = 1,
   max = Number.POSITIVE_INFINITY,
+  clamp = true,
 ): number {
   const raw = env[key];
   if (raw === undefined || raw.trim() === '') return fallback;
   const value = Number(raw);
   const range = max === Number.POSITIVE_INFINITY ? `>= ${min}` : `between ${min} and ${max}`;
-  if (Number.isFinite(value) && value >= min && value <= max) return Math.floor(value);
-  warn(`${key}: ignoring "${raw.trim()}" (expected an integer ${range}), using ${fallback}`);
-  return fallback;
+  if (!Number.isFinite(value) || value < min || (value > max && !clamp)) {
+    warn(`${key}: ignoring "${raw.trim()}" (expected an integer ${range}), using ${fallback}`);
+    return fallback;
+  }
+  if (value > max) {
+    warn(`${key}: clamping "${raw.trim()}" to ${max}`);
+    return max;
+  }
+  return Math.floor(value);
 }
 
 function boolEnv(env: Env, key: string, fallback: boolean, warn: Warn): boolean {
@@ -175,26 +191,62 @@ export function loadConfig(env: Env, version: string, warn: Warn = () => {}): Co
     transport: transportEnv(env, warn),
     searxngUrl,
     searxngUrls: [searxngUrl, ...urlsEnv(env, 'SEARXNG_URLS', searxngUrl, warn)],
-    searxngTimeoutMs: intEnv(env, 'SEARXNG_TIMEOUT_MS', DEFAULT_SEARXNG_TIMEOUT_MS, warn),
-    cacheTtlMs: intEnv(env, 'SEARXNG_CACHE_TTL_MS', DEFAULT_CACHE_TTL_MS, warn, 0),
-    fetchTimeoutMs: intEnv(env, 'FETCH_TIMEOUT_MS', DEFAULT_FETCH_TIMEOUT_MS, warn),
+    searxngTimeoutMs: intEnv(
+      env,
+      'SEARXNG_TIMEOUT_MS',
+      DEFAULT_SEARXNG_TIMEOUT_MS,
+      warn,
+      1,
+      MAX_SEARXNG_TIMEOUT_MS,
+    ),
+    cacheTtlMs: intEnv(
+      env,
+      'SEARXNG_CACHE_TTL_MS',
+      DEFAULT_CACHE_TTL_MS,
+      warn,
+      0,
+      MAX_CACHE_TTL_MS,
+    ),
+    fetchTimeoutMs: intEnv(
+      env,
+      'FETCH_TIMEOUT_MS',
+      DEFAULT_FETCH_TIMEOUT_MS,
+      warn,
+      1,
+      MAX_FETCH_TIMEOUT_MS,
+    ),
     shutdownTimeoutMs: intEnv(
       env,
       'SHUTDOWN_TIMEOUT_MS',
       DEFAULT_SHUTDOWN_TIMEOUT_MS,
       warn,
       MIN_SHUTDOWN_TIMEOUT_MS,
+      MAX_SHUTDOWN_TIMEOUT_MS,
     ),
-    maxChars: intEnv(env, 'MAX_CHARS', DEFAULT_MAX_CHARS, warn),
-    maxResponseBytes: intEnv(env, 'MAX_RESPONSE_BYTES', DEFAULT_MAX_RESPONSE_BYTES, warn),
+    maxChars: intEnv(env, 'MAX_CHARS', DEFAULT_MAX_CHARS, warn, 1, MAX_MAX_CHARS),
+    maxResponseBytes: intEnv(
+      env,
+      'MAX_RESPONSE_BYTES',
+      DEFAULT_MAX_RESPONSE_BYTES,
+      warn,
+      1,
+      MAX_MAX_RESPONSE_BYTES,
+    ),
     userAgent: strEnv(env, 'USER_AGENT', `searxng-mcp-server/${version}`),
     allowPrivateHosts: boolEnv(env, 'ALLOW_PRIVATE_HOSTS', false, warn),
     host: strEnv(env, 'HOST', DEFAULT_HTTP_HOST),
-    port: intEnv(env, 'PORT', DEFAULT_HTTP_PORT, warn, 1, MAX_PORT),
+    port: intEnv(env, 'PORT', DEFAULT_HTTP_PORT, warn, 1, MAX_PORT, false),
     allowedHosts: listEnv(env, 'SEARXNG_ALLOWED_HOSTS'),
     allowedOrigins: listEnv(env, 'SEARXNG_ALLOWED_ORIGINS'),
   };
-  if (env.SEARXNG_USERNAME) config.searxngUsername = env.SEARXNG_USERNAME;
+  if (env.SEARXNG_USERNAME) {
+    config.searxngUsername = env.SEARXNG_USERNAME;
+    if (!env.SEARXNG_PASSWORD) {
+      warn(
+        'SEARXNG_USERNAME is set without SEARXNG_PASSWORD: requests use Basic auth with an empty password',
+      );
+    }
+  }
   if (env.SEARXNG_PASSWORD) config.searxngPassword = env.SEARXNG_PASSWORD;
   if (env.SEARXNG_AUTH_TOKEN && env.SEARXNG_AUTH_TOKEN.trim() !== '') {
     config.authToken = env.SEARXNG_AUTH_TOKEN;
