@@ -110,6 +110,8 @@ interface ExtractedArticle {
 export function extractArticle(html: string, url: string): ExtractedArticle {
   if (html.trim() === '') return {};
   const { document } = parseHTML(html);
+  // Tagless input yields no documentElement, which Readability's constructor rejects.
+  if (!document.documentElement) return {};
   // charThreshold: 0 keeps articles the 500-char default would reject.
   const reader = new Readability(document, { charThreshold: 0 });
   const article = reader.parse();
@@ -125,6 +127,8 @@ export function extractArticle(html: string, url: string): ExtractedArticle {
 export function stripToText(html: string): string {
   if (html.trim() === '') return '';
   const { document } = parseHTML(html);
+  // linkedom's body getter dereferences a null documentElement on tagless input.
+  if (!document.documentElement) return html;
   const body = document.body;
   const root = body && body.childNodes.length > 0 ? body : (document.documentElement ?? body);
   const out: string[] = [];

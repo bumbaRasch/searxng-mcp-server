@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `fetch_content` no longer fails with `First argument to Readability constructor should be a document object` on non-HTML textual bodies (plain text, Markdown, JSON, XML/feeds), such as raw files served as `text/plain`; only `text/html`/`application/xhtml+xml` (and responses without a Content-Type) go through Readability, while other allowed textual types pass through verbatim, preserving Markdown tables, code fences and heading offsets (D17). `extractArticle`/`stripToText` additionally guard tagless input that linkedom parses without a `documentElement`.
+
 ## [0.5.0] - 2026-09-26
 
 ### Added

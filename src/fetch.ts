@@ -83,6 +83,10 @@ const MAX_CONTENT_TYPE_CHARS = 100;
 // application/pdf passes the gate but takes the PDF branch instead of Readability (D4).
 const ALLOWED_CONTENT_TYPE = /^(text\/[\w.+-]*|application\/(json|xml|pdf|[\w.+-]+\+xml))\s*(;|$)/i;
 const PDF_CONTENT_TYPE = /^application\/pdf\s*(;|$)/i;
+// D17: only real HTML bodies go through Readability. Other allowed textual
+// types (plain text, markdown, JSON, feeds) pass through verbatim, while a
+// missing Content-Type keeps the legacy Readability path.
+const HTML_CONTENT_TYPE = /^(text\/html|application\/xhtml\+xml)\s*(;|$)/i;
 
 export class FetchError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
@@ -176,13 +180,18 @@ export async function fetchContent(
         pages = extraction.pages;
         title = extraction.title;
       } else {
-        const html = await readCapped(response, config.maxResponseBytes);
-        const article = extractArticle(html, url.toString());
-        extracted = article.contentHtml
-          ? toMarkdown(article.contentHtml)
-          : stripToText(article.textContent ?? html);
-        title = article.title;
-        byline = article.byline;
+        const body = await readCapped(response, config.maxResponseBytes);
+        const isHtml = contentType === '' || HTML_CONTENT_TYPE.test(contentType);
+        if (isHtml) {
+          const article = extractArticle(body, url.toString());
+          extracted = article.contentHtml
+            ? toMarkdown(article.contentHtml)
+            : stripToText(article.textContent ?? body);
+          title = article.title;
+          byline = article.byline;
+        } else {
+          extracted = body;
+        }
       }
 
       // Reading controls (D14): section first — it defines the effective

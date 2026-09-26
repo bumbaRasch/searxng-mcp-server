@@ -41,7 +41,13 @@ const PDF_BYTES = new Uint8Array(readFileSync(new URL('./fixtures/sample.pdf', i
 
 describe('fetchContent', () => {
   it('fetches and returns markdown with metadata', async () => {
-    const fetchImpl = asFetchLike(async () => new Response(HTML_PAGE, { status: 200 }));
+    const fetchImpl = asFetchLike(
+      async () =>
+        new Response(HTML_PAGE, {
+          status: 200,
+          headers: { 'content-type': 'text/html; charset=utf-8' },
+        }),
+    );
     const result = await fetchContent(config, 'https://example.test/doc', { fetchImpl });
     expect(result.finalUrl).toBe('https://example.test/doc');
     expect(result.content.length).toBeGreaterThan(20);
@@ -167,7 +173,13 @@ describe('offset continuation', () => {
   // 3000 whitespace-free chars so extraction returns the body verbatim.
   const longPage = `<!doctype html><html><head><title>Long</title></head><body><article><p>${'abcdefghij'.repeat(300)}</p></article></body></html>`;
   const longFetch = (): FetchLike =>
-    asFetchLike(async () => new Response(longPage, { status: 200 }));
+    asFetchLike(
+      async () =>
+        new Response(longPage, {
+          status: 200,
+          headers: { 'content-type': 'text/html; charset=utf-8' },
+        }),
+    );
 
   it('extracts the fixture at exactly 3000 chars', async () => {
     const full = await fetchContent(config, 'https://example.test/long', {
@@ -285,7 +297,14 @@ describe('reading controls (outline + section)', () => {
     `<p>${'beta body text '.repeat(30)}</p>`,
     '</article></body></html>',
   ].join('');
-  const docFetch = (): FetchLike => asFetchLike(async () => new Response(docHtml, { status: 200 }));
+  const docFetch = (): FetchLike =>
+    asFetchLike(
+      async () =>
+        new Response(docHtml, {
+          status: 200,
+          headers: { 'content-type': 'text/html; charset=utf-8' },
+        }),
+    );
   const pdfFixtureFetch = (): FetchLike =>
     asFetchLike(
       async () =>
@@ -504,6 +523,78 @@ describe('Content-Type gate', () => {
     );
     const result = await fetchContent(config, 'https://example.test/feed', { fetchImpl });
     expect(result.truncated).toBe(false);
+  });
+});
+
+describe('non-HTML text bodies', () => {
+  const MARKDOWN = [
+    '---',
+    'name: fixture',
+    '---',
+    '',
+    '# Title',
+    '',
+    '| a | b |',
+    '| - | - |',
+    '| 1 | 2 |',
+    '',
+    '## Alpha',
+    '',
+    'alpha body',
+    '',
+    '## Beta',
+    '',
+    'beta body',
+  ].join('\n');
+
+  const textFetch = (contentType: string): FetchLike =>
+    asFetchLike(
+      async () => new Response(MARKDOWN, { status: 200, headers: { 'content-type': contentType } }),
+    );
+
+  it('passes a text/plain body through verbatim instead of running Readability', async () => {
+    const result = await fetchContent(config, 'https://example.test/readme.md', {
+      fetchImpl: textFetch('text/plain; charset=utf-8'),
+    });
+    expect(result.content).toBe(MARKDOWN);
+    expect(result.truncated).toBe(false);
+  });
+
+  it('passes a JSON body through as raw text', async () => {
+    const json = '{"hello":"world"}';
+    const fetchImpl = asFetchLike(
+      async () =>
+        new Response(json, { status: 200, headers: { 'content-type': 'application/json' } }),
+    );
+    const result = await fetchContent(config, 'https://example.test/data.json', { fetchImpl });
+    expect(result.content).toBe(json);
+  });
+
+  it('scans markdown headings in a text/plain body for outline', async () => {
+    const result = await fetchContent(config, 'https://example.test/readme.md', {
+      fetchImpl: textFetch('text/plain'),
+      outline: true,
+    });
+    expect(result.headings).toEqual([
+      { text: 'Title', offset: expect.any(Number), level: 1 },
+      { text: 'Alpha', offset: expect.any(Number), level: 2 },
+      { text: 'Beta', offset: expect.any(Number), level: 2 },
+    ]);
+    for (const heading of result.headings ?? []) {
+      expect(result.content.slice(heading.offset, heading.offset + heading.level)).toBe(
+        '#'.repeat(heading.level),
+      );
+    }
+  });
+
+  it('slices a section from a text/plain body', async () => {
+    const result = await fetchContent(config, 'https://example.test/readme.md', {
+      fetchImpl: textFetch('text/plain'),
+      section: 'Beta',
+    });
+    expect(result.content.startsWith('## Beta')).toBe(true);
+    expect(result.content).not.toContain('## Alpha');
+    expect(result.content).not.toContain('alpha body');
   });
 });
 
