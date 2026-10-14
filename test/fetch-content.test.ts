@@ -39,6 +39,17 @@ const config = makeConfig({ searxngUrl: 'http://localhost:8888' });
 /** Two-page fixture with /Title "Sample PDF Fixture" (see test/fixtures). */
 const PDF_BYTES = new Uint8Array(readFileSync(new URL('./fixtures/sample.pdf', import.meta.url)));
 
+/** Fetch stub serving the PDF fixture with a customizable content type. */
+function pdfFetch(contentType = 'application/pdf'): FetchLike {
+  return asFetchLike(
+    async () =>
+      new Response(PDF_BYTES, {
+        status: 200,
+        headers: { 'content-type': contentType },
+      }),
+  );
+}
+
 describe('fetchContent', () => {
   it('fetches and returns markdown with metadata', async () => {
     const fetchImpl = asFetchLike(
@@ -305,11 +316,6 @@ describe('reading controls (outline + section)', () => {
           headers: { 'content-type': 'text/html; charset=utf-8' },
         }),
     );
-  const pdfFixtureFetch = (): FetchLike =>
-    asFetchLike(
-      async () =>
-        new Response(PDF_BYTES, { status: 200, headers: { 'content-type': 'application/pdf' } }),
-    );
 
   it('outline returns headings with offsets into the full extracted content', async () => {
     const full = await fetchContent(config, 'https://example.test/guide', {
@@ -423,17 +429,17 @@ describe('reading controls (outline + section)', () => {
 
   it('sections the PDF by [Page N] marker and outlines its pages', async () => {
     const full = await fetchContent(config, 'https://example.test/doc.pdf', {
-      fetchImpl: pdfFixtureFetch(),
+      fetchImpl: pdfFetch(),
     });
     const page2 = await fetchContent(config, 'https://example.test/doc.pdf', {
-      fetchImpl: pdfFixtureFetch(),
+      fetchImpl: pdfFetch(),
       section: '[page 2]',
     });
     expect(page2.content).toBe('[Page 2]\nSecond page text.');
     expect(page2.pages).toBe(2);
 
     const outline = await fetchContent(config, 'https://example.test/doc.pdf', {
-      fetchImpl: pdfFixtureFetch(),
+      fetchImpl: pdfFetch(),
       outline: true,
     });
     expect(outline.headings).toEqual([
@@ -638,16 +644,6 @@ describe('DNS rebinding (TOCTOU)', () => {
 });
 
 describe('PDF content', () => {
-  function pdfFetch(contentType = 'application/pdf'): FetchLike {
-    return asFetchLike(
-      async () =>
-        new Response(PDF_BYTES, {
-          status: 200,
-          headers: { 'content-type': contentType },
-        }),
-    );
-  }
-
   it('extracts per-page text, page count and metadata title', async () => {
     const result = await fetchContent(config, 'https://example.test/doc.pdf', {
       fetchImpl: pdfFetch(),
