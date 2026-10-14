@@ -12,6 +12,8 @@ const failingLookup = async (): Promise<AddressRecord[]> => {
   throw new Error('NXDOMAIN');
 };
 const emptyLookup = async (): Promise<AddressRecord[]> => [];
+/** Lookup stub resolving any hostname to a single record for `ip`. */
+const lookupReturning = (ip: string) => async (): Promise<AddressRecord[]> => [rec(ip)];
 
 describe('isIpBlocked', () => {
   it.each([
@@ -104,17 +106,18 @@ describe('assertUrlAllowed', () => {
   });
 
   it('rejects a hostname that resolves to a private IP', async () => {
-    const lookup = async () => [rec('10.0.0.5')];
     await expect(
-      assertUrlAllowed('http://internal.test', { allowPrivateHosts: false, lookup }),
+      assertUrlAllowed('http://internal.test', {
+        allowPrivateHosts: false,
+        lookup: lookupReturning('10.0.0.5'),
+      }),
     ).rejects.toThrow(/internal\.test/);
   });
 
   it('allows a hostname that resolves to a public IP', async () => {
-    const lookup = async () => [rec('8.8.8.8')];
     const url = await assertUrlAllowed('https://public.test/path', {
       allowPrivateHosts: false,
-      lookup,
+      lookup: lookupReturning('8.8.8.8'),
     });
     expect(url.hostname).toBe('public.test');
   });
