@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-10-14
+
+### Changed
+
+- Bundled SearXNG instance image pinned to `2026.10.13-22c64b8d3` (from `2026.8.22-9fea41204`): picks up the new `xprivo`/`iconify`/`findborg`/`s1search` engines, the `stock images` category, curl_cffi-backed networking (better bot-detection survival) and automatically populated embedded stream URLs for more video engines (already surfaced as `iframeSrc` by `video_search`). The JSON search API, `/config` and `/autocompleter` are unchanged — verified by the e2e suites against the new build.
+- `searxng/settings.yml` disables the `openalex` engine on the bundled instance: OpenAlex removed its mailto polite pool in Feb 2026, and the SearXNG engine cannot pass an API key yet ([searxng/searxng#6513](https://github.com/searxng/searxng/issues/6513)), which leaves ~100 credits/day per IP — enough to starve `paper_search` on shared or CI IPs. Re-enable by hand once upstream gains api_key support.
+- Renovate now keeps the compose pin current: a package rule teaches it the `YYYY.M.D-sha` tag format via `versionCompatibility` + semver versioning, so the SearXNG image gets update PRs like every other dependency.
+
+### Fixed
+
+- Nightly e2e flake: `paper_search` checks pin `engines: ['arxiv']` so the suite no longer fails on days when the OpenAlex quota is exhausted (the Oct 7/9 schedule failures), and both e2e servers now run with `SEARXNG_TIMEOUT_MS=30000` so slow-but-healthy upstream engines (arxiv can legitimately take >10s) don't trip the default timeout budget.
+
 ## [0.5.1] - 2026-09-26
 
 ### Fixed
