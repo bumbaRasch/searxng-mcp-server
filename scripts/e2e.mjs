@@ -67,7 +67,13 @@ function handleLine(line) {
 
 async function main() {
   serverProcess = spawn(process.execPath, [SERVER], {
-    env: { ...process.env, SEARXNG_URL },
+    env: {
+      ...process.env,
+      SEARXNG_URL,
+      // Upstream engines (arxiv in particular) can legitimately take >10s to
+      // answer; the suite asserts result delivery, not latency budgets.
+      SEARXNG_TIMEOUT_MS: '30000',
+    },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
 
@@ -342,7 +348,9 @@ async function main() {
     // 4f. paper_search against the scientific publications category
     const paperCall = await request(serverProcess, 'tools/call', {
       name: 'paper_search',
-      arguments: { query: 'quantum computing', max_results: 5 },
+      // arxiv only: the default paper engines include quota-limited APIs
+      // (OpenAlex ~100 credits/day per IP) that flake on shared CI IPs.
+      arguments: { query: 'quantum computing', max_results: 5, engines: ['arxiv'] },
     });
     assert(!paperCall.error && !paperCall.result?.isError, 'paper_search call succeeds');
     const paperStructured = paperCall.result?.structuredContent;

@@ -43,7 +43,14 @@ function freePort() {
 async function main() {
   const port = await freePort();
   serverProcess = spawn(process.execPath, [SERVER, '--transport', 'http'], {
-    env: { ...process.env, SEARXNG_URL, PORT: String(port) },
+    env: {
+      ...process.env,
+      SEARXNG_URL,
+      PORT: String(port),
+      // Upstream engines (arxiv in particular) can legitimately take >10s to
+      // answer; the suite asserts result delivery, not latency budgets.
+      SEARXNG_TIMEOUT_MS: '30000',
+    },
     stdio: ['ignore', 'ignore', 'pipe'],
   });
 
@@ -117,7 +124,9 @@ async function main() {
 
     const papers = await client.callTool({
       name: 'paper_search',
-      arguments: { query: 'quantum computing', max_results: 5 },
+      // arxiv only: the default paper engines include quota-limited APIs
+      // (OpenAlex ~100 credits/day per IP) that flake on shared CI IPs.
+      arguments: { query: 'quantum computing', max_results: 5, engines: ['arxiv'] },
     });
     assert(
       !papers.isError && (papers.structuredContent?.results?.length ?? 0) > 0,

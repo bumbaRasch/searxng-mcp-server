@@ -10,8 +10,11 @@ search:
     - html
     - json
 
-# Engine API keys live HERE, not in the MCP server. OpenAlex has required a key
-# since Feb 2026 (mailto pool removed): https://github.com/searxng/searxng/issues/6513
-# engines:
-#   - name: openalex
-#     api_key: 'replace-with-your-openalex-api-key'
+# OpenAlex killed its mailto polite pool in Feb 2026: without an API key the
+# engine gets ~100 credits/day per IP, which starves paper_search on shared
+# or CI IPs. Disabled by default until the SearXNG engine supports api_key
+# (https://github.com/searxng/searxng/issues/6513); if you have a key, flip
+# disabled back to false once api_key support lands upstream.
+engines:
+  - name: openalex
+    disabled: true
