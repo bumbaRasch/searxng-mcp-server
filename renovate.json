@@ -4,5 +4,14 @@
     "config:recommended",
     "helpers:pinGitHubActionDigests",
     "security:minimumReleaseAgeNpm"
+  ],
+  "packageRules": [
+    {
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["docker.io/searxng/searxng"],
+      "description": "SearXNG tags are date-sha pairs (2026.10.13-22c64b8d3): compare the date, treat the sha as compatibility.",
+      "versionCompatibility": "^(?<version>\\d{4}\\.\\d+\\.\\d+)(?<compatibility>-.*)?$",
+      "versioning": "semver"
+    }
   ]
 }
