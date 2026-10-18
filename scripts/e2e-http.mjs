@@ -29,6 +29,37 @@ function assert(condition, message) {
   console.log(`ok: ${message}`);
 }
 
+// Externally-backed tool calls (arxiv in particular) flake when upstream
+// engines throttle a shared CI IP. Retryable are only the epidemic-shaped
+// outcomes: a network-ish isError (timeout / network / HTTP 5xx) or a clean
+// call with an empty results array. Deterministic tool errors and JSON-RPC
+// errors come back as-is so the caller's asserts fail exactly as before.
+function isRetryableFlake(result) {
+  if (result?.isError === true) {
+    const text = result?.content?.[0]?.text ?? '';
+    return /timed out|timeout|fetch failed|ENOTFOUND|ECONNREFUSED|EAI_AGAIN|ECONNRESET|network|HTTP 5\d\d/i.test(
+      text,
+    );
+  }
+  return (result?.structuredContent?.results?.length ?? 0) === 0;
+}
+
+async function retryToolCall(label, fn, { attempts = 3, delaysMs = [2_000, 5_000] } = {}) {
+  let last;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    last = await fn();
+    if (!isRetryableFlake(last)) return last;
+    if (attempt < attempts) {
+      const delay = delaysMs[Math.min(attempt - 1, delaysMs.length - 1)];
+      console.log(
+        `retry ${attempt}/${attempts - 1}: ${label} flaked upstream, retrying in ${delay}ms`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+  return last;
+}
+
 function freePort() {
   return new Promise((resolve, reject) => {
     const probe = createServer();
@@ -116,6 +147,19 @@ async function main() {
       `server/discover advertises 2026-07-28 (got ${JSON.stringify(discover?.supportedVersions)})`,
     );
     assert(discover?.capabilities?.tools !== undefined, 'server/discover advertises tools');
+    // The three 2026-07-28 extensions declared in src/server.ts
+    // (capabilities.extensions), advertised here per extensions/overview.
+    const declaredExtensions = [
+      'io.modelcontextprotocol/tasks',
+      'io.modelcontextprotocol/skills',
+      'io.modelcontextprotocol/ui',
+    ];
+    for (const uri of declaredExtensions) {
+      assert(
+        (discover?.capabilities?.extensions ?? {})[uri] !== undefined,
+        `server/discover advertises "${uri}"`,
+      );
+    }
     assert(
       discover?.ttlMs === 3_600_000 && discover?.cacheScope === 'public',
       `server/discover carries the cache hint (ttlMs=${String(discover?.ttlMs)}, scope=${String(discover?.cacheScope)})`,
@@ -177,12 +221,15 @@ async function main() {
       'deep_search returns a cited dossier over HTTP',
     );
 
-    const papers = await client.callTool({
-      name: 'paper_search',
-      // arxiv only: the default paper engines include quota-limited APIs
-      // (OpenAlex ~100 credits/day per IP) that flake on shared CI IPs.
-      arguments: { query: 'quantum computing', max_results: 5, engines: ['arxiv'] },
-    });
+    // arxiv only: the default paper engines include quota-limited APIs
+    // (OpenAlex ~100 credits/day per IP) that flake on shared CI IPs; the
+    // retry helper rides out exactly those epidemic-shaped failures.
+    const papers = await retryToolCall('paper_search', () =>
+      client.callTool({
+        name: 'paper_search',
+        arguments: { query: 'quantum computing', max_results: 5, engines: ['arxiv'] },
+      }),
+    );
     assert(
       !papers.isError && (papers.structuredContent?.results?.length ?? 0) > 0,
       `paper_search returns results over HTTP (got ${papers.structuredContent?.results?.length ?? 0})`,

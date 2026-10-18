@@ -34,6 +34,42 @@ function assert(condition, message) {
   console.log(`ok: ${message}`);
 }
 
+// Externally-backed tool calls (arxiv in particular) flake when upstream
+// engines throttle a shared CI IP. Retryable are only the epidemic-shaped
+// outcomes: a network-ish isError (timeout / network / HTTP 5xx) or a clean
+// call with an empty results array. Deterministic tool errors and JSON-RPC
+// errors come back as-is so the caller's asserts fail exactly as before.
+function isRetryableFlake(result) {
+  if (result?.isError === true) {
+    const text = result?.content?.[0]?.text ?? '';
+    return /timed out|timeout|fetch failed|ENOTFOUND|ECONNREFUSED|EAI_AGAIN|ECONNRESET|network|HTTP 5\d\d/i.test(
+      text,
+    );
+  }
+  return (result?.structuredContent?.results?.length ?? 0) === 0;
+}
+
+async function callWithRetry(
+  child,
+  name,
+  callArguments,
+  { attempts = 3, delaysMs = [2_000, 5_000] } = {},
+) {
+  let last;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    last = await request(child, 'tools/call', { name, arguments: callArguments });
+    if (!isRetryableFlake(last.result)) return last;
+    if (attempt < attempts) {
+      const delay = delaysMs[Math.min(attempt - 1, delaysMs.length - 1)];
+      console.log(
+        `retry ${attempt}/${attempts - 1}: ${name} flaked upstream, retrying in ${delay}ms`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+  return last;
+}
+
 function send(child, message) {
   child.stdin.write(`${JSON.stringify(message)}\n`);
 }
@@ -102,6 +138,19 @@ async function main() {
       clientInfo: { name: 'searxng-mcp-server-e2e', version: '0.0.1' },
     });
     assert(init.result?.serverInfo?.name === 'searxng-mcp-server', 'initialize returns serverInfo');
+    // The three 2026-07-28 extensions declared in src/server.ts
+    // (capabilities.extensions); {} means "supported, no per-extension settings".
+    const declaredExtensions = [
+      'io.modelcontextprotocol/tasks',
+      'io.modelcontextprotocol/skills',
+      'io.modelcontextprotocol/ui',
+    ];
+    for (const uri of declaredExtensions) {
+      assert(
+        (init.result?.capabilities?.extensions ?? {})[uri] !== undefined,
+        `initialize declares the "${uri}" extension`,
+      );
+    }
     send(serverProcess, { jsonrpc: '2.0', method: 'notifications/initialized' });
 
     // 2. Tool registration
@@ -614,11 +663,13 @@ async function main() {
     );
 
     // 4f. paper_search against the scientific publications category
-    const paperCall = await request(serverProcess, 'tools/call', {
-      name: 'paper_search',
-      // arxiv only: the default paper engines include quota-limited APIs
-      // (OpenAlex ~100 credits/day per IP) that flake on shared CI IPs.
-      arguments: { query: 'quantum computing', max_results: 5, engines: ['arxiv'] },
+    // arxiv only: the default paper engines include quota-limited APIs
+    // (OpenAlex ~100 credits/day per IP) that flake on shared CI IPs; the
+    // retry helper rides out exactly those epidemic-shaped failures.
+    const paperCall = await callWithRetry(serverProcess, 'paper_search', {
+      query: 'quantum computing',
+      max_results: 5,
+      engines: ['arxiv'],
     });
     assert(!paperCall.error && !paperCall.result?.isError, 'paper_search call succeeds');
     const paperStructured = paperCall.result?.structuredContent;
