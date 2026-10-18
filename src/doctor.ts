@@ -8,7 +8,7 @@
 
 import { isRecord, sanitizeMeta } from './categories/shared.js';
 import type { Config } from './config.js';
-import type { DoctorResponse } from './schemas.js';
+import type { DoctorResponse } from './schemas/doctor.js';
 import {
   mapEnginesResponse,
   probeInstanceJson,

@@ -22,14 +22,14 @@ import type {
 import type { DeepSearchDossier } from './deep-search.js';
 import {
   MAX_URLS_PER_INFOBOX,
-  type CrawlResponse,
-  type DoctorResponse,
-  type FetchResult,
-  type ListEnginesResponse,
-  type SearchAndFetchResponse,
   type SearchBatchResponse,
   type SearchResponse,
-} from './schemas.js';
+} from './schemas/search.js';
+import { type SearchAndFetchResponse } from './schemas/search-and-fetch.js';
+import type { FetchResult } from './schemas/fetch.js';
+import type { CrawlResponse } from './schemas/crawl.js';
+import type { DoctorResponse } from './schemas/doctor.js';
+import type { ListEnginesResponse } from './schemas/list-engines.js';
 
 /** Compact mode keeps the snippet to roughly one line (D6). */
 const COMPACT_SNIPPET_CHARS = 160;

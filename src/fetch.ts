@@ -7,7 +7,7 @@ import { isRedirect, readCapped, type FetchLike } from './http.js';
 import { toMarkdown, truncateWithMarker } from './markdown.js';
 import { extractPdfContent, readPdfResponse, type PdfExtraction } from './pdf.js';
 import { traceHeaders } from './otel.js';
-import type { FetchResult } from './schemas.js';
+import type { FetchResult } from './schemas/fetch.js';
 import { assertUrlAllowed, createGuardedDispatcher, type LookupAll } from './ssrf.js';
 import type { PageStore } from './crawl.js';
 

@@ -30,14 +30,13 @@ import type {
 } from './categories/schemas.js';
 import {
   MAX_URLS_PER_INFOBOX,
-  type ListEngineEntry,
-  type ListEnginesResponse,
   type SearchAnswer,
   type SearchBatchResponse,
   type SearchInfobox,
-  type SearchParams,
   type SearchResponse,
-} from './schemas.js';
+} from './schemas/search.js';
+import type { ListEngineEntry, ListEnginesResponse } from './schemas/list-engines.js';
+import type { SearchParams } from './schemas/mappers.js';
 
 const MAX_INFOBOX_ID_CHARS = 200;
 const MAX_INFOBOX_URL_CHARS = 500;

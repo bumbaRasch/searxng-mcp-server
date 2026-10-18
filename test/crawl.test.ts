@@ -167,7 +167,7 @@ describe('crawlSite', () => {
     expect(hit?.branch).toBe('markdown');
     // A ref-based fetch of the crawled page serves from the store: no new fetch.
     const { handleFetch } = await import('../src/tools.js');
-    const { fetchInput } = await import('../src/schemas.js');
+    const { fetchInput } = await import('../src/schemas/fetch.js');
     const result = await handleFetch(config, fetchInput.parse({ url: `ref:${pageA?.ref}` }), {
       fetchImpl: countingFetch,
       refs,

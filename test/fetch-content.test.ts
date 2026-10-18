@@ -8,7 +8,7 @@ import {
   sliceSection,
 } from '../src/fetch.js';
 import type { FetchLike } from '../src/http.js';
-import { fetchInput, fetchOutput } from '../src/schemas.js';
+import { fetchInput, fetchOutput } from '../src/schemas/fetch.js';
 import type { LookupAll } from '../src/ssrf.js';
 import { asFetchLike, HTML_PAGE, makeConfig } from './helpers.js';
 
