@@ -126,6 +126,18 @@ describe('createServer wiring', () => {
     expect(icons[0]?.src).toMatch(/^data:image\/png;base64,/);
   });
 
+  it('declares exactly the tasks, skills and ui extensions in initialize', async () => {
+    const responses = await rpc([], true);
+    const init = responses.get(1) as { capabilities?: { extensions?: Record<string, unknown> } };
+    // Empty settings objects: no extension defines server-side settings, and
+    // skills omits directoryRead (resources/directory/read is not served).
+    expect(init?.capabilities?.extensions).toEqual({
+      'io.modelcontextprotocol/tasks': {},
+      'io.modelcontextprotocol/skills': {},
+      'io.modelcontextprotocol/ui': {},
+    });
+  });
+
   it('returns sanitized tool errors for invalid input', async () => {
     const responses = await rpc([
       {
