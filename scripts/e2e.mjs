@@ -124,6 +124,53 @@ async function main() {
     );
     console.log(`   first result: ${structured.results[0].url}`);
 
+    // 3a. citations: results carry stable ref tokens; fetch_content resolves ref:N
+    const firstRef = structured.results[0].ref;
+    assert(
+      Number.isInteger(firstRef) && firstRef >= 1,
+      `search results carry ref tokens (ref=${firstRef})`,
+    );
+    const refFetch = await request(serverProcess, 'tools/call', {
+      name: 'fetch_content',
+      arguments: { url: `ref:${firstRef}` },
+    });
+    assert(
+      !refFetch.error && !refFetch.result?.isError,
+      'fetch_content resolves ref:N to its source',
+    );
+    const refFetchText = refFetch.result?.content?.[0]?.text ?? '';
+    assert(refFetchText.length > 100, 'ref-based fetch returns page content');
+
+    const unknownRef = await request(serverProcess, 'tools/call', {
+      name: 'fetch_content',
+      arguments: { url: 'ref:999999999' },
+    });
+    assert(unknownRef.result?.isError === true, 'fetch_content of an unknown ref is a tool error');
+
+    // 3b. search_and_fetch: one call returns results plus fetched pages aligned by ref
+    const safCall = await request(serverProcess, 'tools/call', {
+      name: 'search_and_fetch',
+      arguments: { query: 'searxng', fetch_top: 2, max_results: 5 },
+    });
+    assert(!safCall.error && !safCall.result?.isError, 'search_and_fetch call succeeds');
+    const saf = safCall.result?.structuredContent;
+    assert(
+      Array.isArray(saf?.results) && saf.results.length > 0,
+      'search_and_fetch returns the search envelope',
+    );
+    assert(
+      Array.isArray(saf?.pages) && saf.pages.length >= 1,
+      `search_and_fetch fetches pages (got ${saf?.pages?.length ?? 0})`,
+    );
+    assert(saf.pages[0].ref === saf.results[0].ref, 'pages align with results by ref');
+    const pagesWithContent = saf.pages.filter((page) => typeof page.content === 'string');
+    const pagesWithError = saf.pages.filter((page) => typeof page.error === 'string');
+    assert(
+      pagesWithContent.length + pagesWithError.length === saf.pages.length,
+      'every fetched page carries content (possibly empty) or an error entry',
+    );
+    console.log(`   pages fetched: ${pagesWithContent.length}/${saf.pages.length}`);
+
     // 4. fetch_content of a public page
     const exampleCall = await request(serverProcess, 'tools/call', {
       name: 'fetch_content',

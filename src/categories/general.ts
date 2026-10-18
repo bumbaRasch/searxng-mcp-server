@@ -35,6 +35,8 @@ const resultSchema = z.object({
   title: z.string(),
   url: z.string(),
   content: z.string(),
+  // Session-stable citation ref, minted after projection (not projected).
+  ref: z.number().int().positive().optional(),
   engine: z.string().optional(),
   engines: z.array(z.string()).optional(),
   category: z.string().optional(),
@@ -85,7 +87,13 @@ export const generalCategory = defineCategory({
   projectResult,
   renderResultLines: (result) => {
     const lines: string[] = [];
-    if (result.url) lines.push(sanitizeMeta(result.url));
+    if (result.url) {
+      lines.push(
+        result.ref === undefined
+          ? sanitizeMeta(result.url)
+          : `[ref:${result.ref}] ${sanitizeMeta(result.url)}`,
+      );
+    }
     if (result.content) lines.push('', result.content);
     const meta: string[] = [];
     if (result.engine) meta.push(`engine: ${sanitizeMeta(result.engine)}`);

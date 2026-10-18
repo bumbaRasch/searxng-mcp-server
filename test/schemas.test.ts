@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import * as z from 'zod/v4';
 import {
+  fetchedPageSchema,
   listEnginesInput,
   listEnginesOutput,
+  searchAndFetchInput,
+  searchAndFetchOutput,
   searchInput,
   searchOutput,
   searchToolOutput,
@@ -372,5 +375,54 @@ describe('output schemas are validatable by draft-07-only clients', () => {
       minItems: 2,
       maxItems: 2,
     });
+  });
+});
+
+describe('searchAndFetchInput schema', () => {
+  it('requires a query and defaults fetch_top to 3', () => {
+    expect(searchAndFetchInput.safeParse({}).success).toBe(false);
+    const parsed = searchAndFetchInput.parse({ query: 'q' });
+    expect(parsed.fetch_top).toBe(3);
+  });
+
+  it('bounds fetch_top to 1-5 and inherits the max_chars bounds', () => {
+    expect(searchAndFetchInput.safeParse({ query: 'q', fetch_top: 6 }).success).toBe(false);
+    expect(searchAndFetchInput.safeParse({ query: 'q', max_chars: 500 }).success).toBe(false);
+    expect(searchAndFetchInput.safeParse({ query: 'q', max_chars: 5000 }).success).toBe(true);
+  });
+});
+
+describe('searchAndFetchOutput / fetchedPageSchema', () => {
+  const envelope = {
+    query: 'q',
+    results: [],
+    answers: [],
+    corrections: [],
+    infoboxes: [],
+    suggestions: [],
+    unresponsiveEngines: [],
+  };
+  it('accepts an envelope plus fetched pages', () => {
+    expect(
+      searchAndFetchOutput.safeParse({
+        ...envelope,
+        pages: [
+          {
+            ref: 1,
+            url: 'https://x.test',
+            finalUrl: 'https://x.test/',
+            content: 'c',
+            truncated: false,
+          },
+          { ref: 2, url: 'https://y.test', error: 'HTTP 404' },
+        ],
+      }).success,
+    ).toBe(true);
+  });
+  it('rejects pages without a ref and mixes error/content exclusively in shape', () => {
+    expect(fetchedPageSchema.safeParse({ url: 'https://x.test', content: 'c' }).success).toBe(
+      false,
+    );
+    expect(fetchedPageSchema.safeParse({ ref: 1, url: 'https://x.test' }).success).toBe(true);
   });
 });

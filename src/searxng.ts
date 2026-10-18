@@ -19,6 +19,7 @@ import { imageCategory } from './categories/images.js';
 import { musicCategory } from './categories/music.js';
 import { newsCategory } from './categories/news.js';
 import { videoCategory } from './categories/videos.js';
+import type { RefRegistry } from './refs.js';
 import type {
   ImageSearchResponse,
   MusicSearchResponse,
@@ -43,6 +44,8 @@ const MAX_INFOBOX_URL_CHARS = 500;
 export interface ClientOptions {
   fetchImpl?: FetchLike | undefined;
   cache?: TtlCache<unknown> | undefined;
+  /** Ref registry for citation refs on search results (Stage 1); absent → no refs. */
+  refs?: RefRegistry | undefined;
 }
 
 export class SearxngError extends Error {
@@ -357,6 +360,14 @@ export function applyOperatorDefaults(config: Config, params: SearchParams): Sea
   };
 }
 
+/** Mint session-stable citation refs on the delivered results (Stage 1). */
+function withRefs(refs: RefRegistry, response: SearchResponse): SearchResponse {
+  return {
+    ...response,
+    results: response.results.map((result) => ({ ...result, ref: refs.assign(result.url) })),
+  };
+}
+
 export async function search(
   config: Config,
   params: SearchParams,
@@ -379,7 +390,8 @@ export async function search(
       );
     });
   }
-  return mapSearchResponse(raw, effective.maxResults, effective.minScore);
+  const response = mapSearchResponse(raw, effective.maxResults, effective.minScore);
+  return opts.refs === undefined ? response : withRefs(opts.refs, response);
 }
 
 /** Batch fan-out: concurrent queries with the shared timeout, input-ordered results (D6). */
