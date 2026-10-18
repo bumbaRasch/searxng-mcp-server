@@ -212,6 +212,7 @@ describe('every tool answers over transport', () => {
     paper_search: { query: 'q' },
     list_engines: {},
     doctor: {},
+    crawl_site: { url: 'https://example.test/doc', max_pages: 1 },
   };
 
   it.each([...TOOL_NAMES])('%s returns a result over the transport', async (name) => {

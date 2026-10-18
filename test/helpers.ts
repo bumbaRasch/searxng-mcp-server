@@ -29,6 +29,7 @@ export function makeConfig(overrides: Partial<Config> = {}): Config {
     allowedHosts: [],
     allowedOrigins: [],
     rerankBoostDomains: [],
+    archiveFallback: false,
     htmlFallback: false,
     ...overrides,
   };

@@ -6,6 +6,7 @@ import { RefRegistry } from '../src/refs.js';
 import type { FetchLike } from '../src/http.js';
 import type { LookupAll } from '../src/ssrf.js';
 import {
+  crawlInput,
   doctorInput,
   doctorOutput,
   fetchInput,
@@ -17,6 +18,7 @@ import {
   searchOutput,
   searchToolOutput,
 } from '../src/schemas.js';
+import { formatCrawl } from '../src/format.js';
 import {
   imageSearchInput,
   imageSearchOutput,
@@ -894,5 +896,96 @@ describe('rerank wiring', () => {
     const structured = doctorOutput.parse(result.structuredContent);
     expect(structured.healthy).toBe(true);
     expect(result.content[0]?.text).toContain('all checks passed');
+  });
+});
+
+const noSnapshotFetch: FetchLike = async (url: string) => {
+  if (url.startsWith('https://archive.org/')) return jsonResponse({ archived_snapshots: {} });
+  throw new Error('ENOTFOUND');
+};
+
+describe('archive fallback', () => {
+  const deadUrl = 'https://dead.test/page';
+  const snapshotUrl = 'https://web.archive.org/web/2026/https://dead.test/page';
+
+  const archiveFetch: FetchLike = async (url: string) => {
+    if (url.startsWith('https://archive.org/wayback/available')) {
+      return jsonResponse({
+        archived_snapshots: { closest: { available: true, url: snapshotUrl } },
+      });
+    }
+    if (url === deadUrl) throw new Error('fetch failed');
+    if (url === snapshotUrl) {
+      return new Response(HTML_PAGE, { status: 200, headers: { 'content-type': 'text/html' } });
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+
+  it('falls back to the snapshot when the live page is dead and the call opts in', async () => {
+    const result = await handleFetch(config, fetchInput.parse({ url: deadUrl, archive: true }), {
+      fetchImpl: archiveFetch,
+    });
+    expect(result.isError).toBeUndefined();
+    const structured = fetchOutput.parse(result.structuredContent);
+    expect(structured.archived).toBe(true);
+    expect(structured.finalUrl).toBe(snapshotUrl);
+    expect(result.content[0]?.text).toContain('Internet Archive snapshot');
+  });
+
+  it('keeps the original error when the call does not opt in', async () => {
+    const result = await handleFetch(config, fetchInput.parse({ url: deadUrl }), {
+      fetchImpl: archiveFetch,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/fetch failed/);
+  });
+
+  it('does not archive-fallback on SSRF policy refusals', async () => {
+    let availabilityCalls = 0;
+    const result = await handleFetch(
+      makeConfig({ allowPrivateHosts: false }),
+      fetchInput.parse({ url: 'http://127.0.0.1:8888/x', archive: true }),
+      {
+        fetchImpl: asFetchLike(async (url: string) => {
+          if (url.startsWith('https://archive.org/')) {
+            availabilityCalls += 1;
+            return jsonResponse({});
+          }
+          return new Response('nope', { status: 200 });
+        }),
+      },
+    );
+    expect(result.isError).toBe(true);
+    expect(availabilityCalls).toBe(0);
+  });
+
+  it('keeps the original error when no snapshot exists', async () => {
+    const result = await handleFetch(config, fetchInput.parse({ url: deadUrl, archive: true }), {
+      fetchImpl: noSnapshotFetch,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/ENOTFOUND/);
+  });
+});
+
+describe('crawl_site wiring', () => {
+  it('registers crawl_site with a manifest schema and renders refs', async () => {
+    const registered = new Map<string, { inputSchema?: unknown }>();
+    const fakeServer = {
+      registerTool: (name: string, toolConfig: { inputSchema?: unknown }) => {
+        registered.set(name, toolConfig);
+      },
+    } as unknown as McpServer;
+    registerTools(fakeServer, config);
+    expect(registered.has('crawl_site')).toBe(true);
+    expect(crawlInput.safeParse({ url: 'https://x.test/' }).success).toBe(true);
+    expect(crawlInput.safeParse({ url: 'https://x.test/', max_pages: 31 }).success).toBe(false);
+    const text = formatCrawl({
+      seed: 'https://site.test/',
+      crawled: 1,
+      pages: [{ ref: 3, url: 'https://site.test/', title: 'Doc', snippet: 'word' }],
+    });
+    expect(text).toContain('[ref:3] Doc');
+    expect(text).toContain('UNTRUSTED_WEB_CONTENT');
   });
 });
