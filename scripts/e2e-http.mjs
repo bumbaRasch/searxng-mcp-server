@@ -165,6 +165,17 @@ async function main() {
       'autocomplete returns a suggestions array over HTTP',
     );
 
+    // Stage 4: deep_search inline over HTTP (no tasks capability → bounded run).
+    const deep = await client.callTool({
+      name: 'deep_search',
+      arguments: { query: 'searxng metasearch', max_iterations: 1, sources_per_iteration: 1 },
+    });
+    assert(!deep.isError, 'deep_search inline call succeeds over HTTP');
+    assert(
+      /Deep search dossier/.test(deep.content?.[0]?.text ?? ''),
+      'deep_search returns a cited dossier over HTTP',
+    );
+
     const papers = await client.callTool({
       name: 'paper_search',
       // arxiv only: the default paper engines include quota-limited APIs
