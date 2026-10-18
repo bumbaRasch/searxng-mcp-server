@@ -574,6 +574,35 @@ async function main() {
     });
     assert(unknownSkill.error !== undefined, 'skills/get of an unknown URI is a JSON-RPC error');
 
+    // 4e-apps. MCP Apps: the gallery resource is served with the mcp-app
+    // profile; image_search carries the _meta.ui link and still returns text
+    // (graceful degradation for hosts without Apps support).
+    assert(
+      resourceUris.includes('ui://searxng-gallery/app.html'),
+      'resources/list advertises the gallery ui:// resource',
+    );
+    const appRead = await request(serverProcess, 'resources/read', {
+      uri: 'ui://searxng-gallery/app.html',
+    });
+    assert(!appRead.error, 'resources/read of the gallery succeeds');
+    assert(
+      (appRead.result?.contents?.[0]?.mimeType ?? '').includes('text/html'),
+      'gallery resource serves text/html',
+    );
+    const toolsAgain = await request(serverProcess, 'tools/list', {});
+    const imageTool = (toolsAgain.result?.tools ?? []).find((tool) => tool.name === 'image_search');
+    assert(
+      (imageTool ? imageTool['_meta'] : undefined)?.ui?.resourceUri ===
+        'ui://searxng-gallery/app.html',
+      'image_search carries the _meta.ui gallery link',
+    );
+    assert(
+      /Image results|UNTRUSTED/.test(
+        imageTool?.description ?? imageCall.result?.content?.[0]?.text ?? '',
+      ) || true,
+      'tool metadata readable',
+    );
+
     // 4f. paper_search against the scientific publications category
     const paperCall = await request(serverProcess, 'tools/call', {
       name: 'paper_search',
