@@ -20,6 +20,7 @@ import { musicCategory } from './categories/music.js';
 import { newsCategory } from './categories/news.js';
 import { videoCategory } from './categories/videos.js';
 import type { RefRegistry } from './refs.js';
+import { traceHeaders } from './otel.js';
 import { rerankResults } from './rerank.js';
 import type {
   ImageSearchResponse,
@@ -509,7 +510,8 @@ function instanceHeaders(config: Config): Record<string, string> {
     const credentials = `${config.searxngUsername}:${config.searxngPassword ?? ''}`;
     headers.Authorization = `Basic ${Buffer.from(credentials).toString('base64')}`;
   }
-  return headers;
+  // OTel trace passthrough (Stage 7): forward a validated inbound traceparent.
+  return { ...headers, ...traceHeaders() };
 }
 
 const MAX_ENGINES = 100;

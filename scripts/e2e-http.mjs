@@ -90,6 +90,49 @@ async function main() {
       );
     }
 
+    // Stage 7 polish: server/discover + cacheable-result hints per the
+    // 2026-07-28 caching utilities.
+    const { z } = await import('zod/v4');
+    const discover = await client.request(
+      {
+        method: 'server/discover',
+        params: {
+          _meta: {
+            'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+            'io.modelcontextprotocol/clientInfo': {
+              name: 'searxng-mcp-server-e2e',
+              version: '0.0.1',
+            },
+            'io.modelcontextprotocol/clientCapabilities': {},
+          },
+        },
+      },
+      z.object({}).passthrough(),
+    );
+    assert(discover?.supportedVersions !== undefined, 'server/discover answers');
+    assert(
+      Array.isArray(discover?.supportedVersions) &&
+        discover.supportedVersions.includes('2026-07-28'),
+      `server/discover advertises 2026-07-28 (got ${JSON.stringify(discover?.supportedVersions)})`,
+    );
+    assert(discover?.capabilities?.tools !== undefined, 'server/discover advertises tools');
+    assert(
+      discover?.ttlMs === 3_600_000 && discover?.cacheScope === 'public',
+      `server/discover carries the cache hint (ttlMs=${discover?.ttlMs}, scope=${discover?.cacheScope})`,
+    );
+    assert(
+      discover?._meta?.['io.modelcontextprotocol/serverInfo']?.name === 'searxng-mcp-server',
+      'server/discover carries serverInfo',
+    );
+    const listMeta = await client.request(
+      { method: 'tools/list', params: {} },
+      z.object({}).passthrough(),
+    );
+    assert(
+      listMeta?.ttlMs === 300_000 && listMeta?.cacheScope === 'public',
+      `tools/list carries the cache hint (ttlMs=${listMeta?.ttlMs}, scope=${listMeta?.cacheScope})`,
+    );
+
     const search = await client.callTool({ name: 'search', arguments: { query: 'searxng' } });
     assert(!search.isError, 'search call succeeds');
     const results = search.structuredContent?.results;
