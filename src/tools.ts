@@ -30,6 +30,7 @@ import {
 } from './format.js';
 import type { FetchLike } from './http.js';
 import { TOOL_ICONS } from './icon.js';
+import { runWithTraceContext } from './otel.js';
 import { sharedRefs, type RefRegistry } from './refs.js';
 import { GALLERY_TOOL_META } from './apps.js';
 import {
@@ -487,7 +488,10 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
           annotations: TOOL_ANNOTATIONS,
           icons: TOOL_ICONS,
         },
-        (args) => handleSearch(config, args, effectiveDeps),
+        (args, ctx) =>
+          runWithTraceContext(ctx?.mcpReq?.envelope, async () =>
+            handleSearch(config, args, effectiveDeps),
+          ),
       );
       continue;
     }
@@ -511,7 +515,10 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
         icons: TOOL_ICONS,
         ...appMeta,
       },
-      (args: CategoryToolInput) => handler(config, args, effectiveDeps),
+      (args, ctx) =>
+        runWithTraceContext(ctx?.mcpReq?.envelope, async () =>
+          handler(config, args, effectiveDeps),
+        ),
     );
   }
 
@@ -527,7 +534,10 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
       annotations: TOOL_ANNOTATIONS,
       icons: TOOL_ICONS,
     },
-    (args) => handleFetch(config, args, effectiveDeps),
+    (args, ctx) =>
+      runWithTraceContext(ctx?.mcpReq?.envelope, async () =>
+        handleFetch(config, args, effectiveDeps),
+      ),
   );
 
   server.registerTool(
@@ -542,7 +552,10 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
       annotations: TOOL_ANNOTATIONS,
       icons: TOOL_ICONS,
     },
-    (args) => handleSearchAndFetch(config, args, effectiveDeps),
+    (args, ctx) =>
+      runWithTraceContext(ctx?.mcpReq?.envelope, async () =>
+        handleSearchAndFetch(config, args, effectiveDeps),
+      ),
   );
 
   server.registerTool(
@@ -557,7 +570,10 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
       annotations: TOOL_ANNOTATIONS,
       icons: TOOL_ICONS,
     },
-    (args) => handleAutocomplete(config, args, effectiveDeps),
+    (args, ctx) =>
+      runWithTraceContext(ctx?.mcpReq?.envelope, async () =>
+        handleAutocomplete(config, args, effectiveDeps),
+      ),
   );
 
   server.registerTool(
@@ -572,7 +588,10 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
       annotations: TOOL_ANNOTATIONS,
       icons: TOOL_ICONS,
     },
-    (args) => handleListEngines(config, args, effectiveDeps),
+    (args, ctx) =>
+      runWithTraceContext(ctx?.mcpReq?.envelope, async () =>
+        handleListEngines(config, args, effectiveDeps),
+      ),
   );
 
   server.registerTool(
@@ -587,7 +606,10 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
       annotations: TOOL_ANNOTATIONS,
       icons: TOOL_ICONS,
     },
-    (args) => handleDoctor(config, args, effectiveDeps),
+    (args, ctx) =>
+      runWithTraceContext(ctx?.mcpReq?.envelope, async () =>
+        handleDoctor(config, args, effectiveDeps),
+      ),
   );
 
   server.registerTool(
@@ -602,7 +624,10 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
       annotations: TOOL_ANNOTATIONS,
       icons: TOOL_ICONS,
     },
-    (args) => handleCrawl(config, args, effectiveDeps),
+    (args, ctx) =>
+      runWithTraceContext(ctx?.mcpReq?.envelope, async () =>
+        handleCrawl(config, args, effectiveDeps),
+      ),
   );
 
   server.registerTool(

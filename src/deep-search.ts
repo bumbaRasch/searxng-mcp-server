@@ -7,6 +7,7 @@
  */
 
 import { isRecord, truncateText } from './categories/shared.js';
+import { traceHeaders } from './otel.js';
 import type { Config } from './config.js';
 import { fetchContent } from './fetch.js';
 import type { FetchLike } from './http.js';
@@ -94,7 +95,7 @@ async function synthesize(
     const response = await fetchImpl(endpoint, {
       method: 'POST',
       signal: controller.signal,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...traceHeaders() },
       body: JSON.stringify({
         model: config.synthesisModel,
         messages,
