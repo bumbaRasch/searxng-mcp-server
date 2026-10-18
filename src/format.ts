@@ -19,6 +19,7 @@ import type {
   NewsSearchResponse,
   VideoSearchResponse,
 } from './categories/schemas.js';
+import type { DeepSearchDossier } from './deep-search.js';
 import {
   MAX_URLS_PER_INFOBOX,
   type CrawlResponse,
@@ -288,4 +289,27 @@ export function formatListEngines(response: ListEnginesResponse): string {
     );
   }
   return lines.join('\n').trim();
+}
+
+/** deep_search (Stage 4): the cited dossier, wrapped like all web output. */
+export function formatDeepSearch(dossier: DeepSearchDossier): string {
+  const body: string[] = [`# Deep search dossier: ${sanitizeMeta(dossier.query)}`];
+  body.push(
+    '',
+    `Read ${dossier.notes.length} source${dossier.notes.length === 1 ? '' : 's'} over ${dossier.iterations} iteration${dossier.iterations === 1 ? '' : 's'}.`,
+  );
+  if (dossier.synthesis !== undefined) body.push('', '## Synthesis', '', dossier.synthesis);
+  if (dossier.synthesisNote !== undefined) {
+    body.push('', `_Note: ${sanitizeMeta(dossier.synthesisNote)}_`);
+  }
+  for (const source of dossier.sources) {
+    body.push(
+      '',
+      `## [ref:${source.ref}] ${sanitizeMeta(source.title) || '(untitled)'}`,
+      sanitizeMeta(source.url),
+    );
+    const note = dossier.notes.find((entry) => entry.ref === source.ref);
+    if (note !== undefined) body.push('', note.excerpt);
+  }
+  return wrapUntrusted(body.join('\n'));
 }

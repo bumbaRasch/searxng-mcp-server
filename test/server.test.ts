@@ -107,10 +107,14 @@ describe('createServer wiring', () => {
     const listing = responses.get(2);
     expect(listing?.tools?.map((tool) => tool.name)).toEqual([...TOOL_NAMES]);
     for (const tool of listing?.tools ?? []) {
-      expect(tool.outputSchema).toBeDefined();
+      // deep_search returns a CreateTaskResult when tasks are negotiated —
+      // the SDK rejects output schemas on such tools, so it declares none.
       expect(Array.isArray(tool.icons)).toBe(true);
       // Tuple output compiles to items:false, which draft-07-only clients reject.
-      expect(JSON.stringify(tool.outputSchema)).not.toContain('"items":false');
+      if (tool.name !== 'deep_search') {
+        expect(tool.outputSchema).toBeDefined();
+        expect(JSON.stringify(tool.outputSchema)).not.toContain('"items":false');
+      }
     }
   });
 
@@ -213,6 +217,7 @@ describe('every tool answers over transport', () => {
     list_engines: {},
     doctor: {},
     crawl_site: { url: 'https://example.test/doc', max_pages: 1 },
+    deep_search: { query: 'q', max_iterations: 1, sources_per_iteration: 1 },
   };
 
   it.each([...TOOL_NAMES])('%s returns a result over the transport', async (name) => {

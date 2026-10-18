@@ -3,10 +3,12 @@ import { describe, expect, it } from 'vitest';
 import { autocompleteInput, autocompleteOutput } from '../src/autocompleter.js';
 import { TtlCache } from '../src/cache.js';
 import { RefRegistry } from '../src/refs.js';
+import { TaskStore } from '../src/tasks.js';
 import type { FetchLike } from '../src/http.js';
 import type { LookupAll } from '../src/ssrf.js';
 import {
   crawlInput,
+  deepSearchInput,
   doctorInput,
   doctorOutput,
   fetchInput,
@@ -31,6 +33,7 @@ import {
 } from '../src/categories/schemas.js';
 import {
   handleAutocomplete,
+  handleDeepSearch,
   handleDoctor,
   handleFetch,
   handleImageSearch,
@@ -502,6 +505,7 @@ describe('registerTools', () => {
       ) => {
         registered.push({ name, config: toolConfig, handler });
       },
+      server: { setRequestHandler: () => {} },
     } as unknown as McpServer;
     registerTools(fakeServer, config);
     expect(registered.map((tool) => tool.name)).toEqual([...TOOL_NAMES]);
@@ -517,7 +521,9 @@ describe('registerTools', () => {
         openWorldHint: true,
         idempotentHint: true,
       });
-      expect(tool.config.outputSchema).toBeDefined();
+      // deep_search returns a CreateTaskResult when tasks are negotiated —
+      // the SDK rejects output schemas on such tools, so it declares none.
+      if (tool.name !== 'deep_search') expect(tool.config.outputSchema).toBeDefined();
     }
   });
 
@@ -527,6 +533,7 @@ describe('registerTools', () => {
       registerTool: (name: string, toolConfig: { outputSchema?: unknown }) => {
         registered.push({ name, config: toolConfig });
       },
+      server: { setRequestHandler: () => {} },
     } as unknown as McpServer;
     registerTools(fakeServer, config);
     const image = registered.find((tool) => tool.name === 'image_search');
@@ -545,6 +552,7 @@ describe('registerTools', () => {
       registerTool: (name: string, _config: unknown, handler: unknown) => {
         registered.push({ name, handler });
       },
+      server: { setRequestHandler: () => {} },
     } as unknown as McpServer;
     registerTools(fakeServer, config, { fetchImpl: disabledFetch });
     const byName = new Map(registered.map((tool) => [tool.name, tool.handler]));
@@ -750,6 +758,7 @@ describe('handleAutocomplete', () => {
       registerTool: (name: string, toolConfig: { title?: string; description?: string }) => {
         registered.set(name, toolConfig);
       },
+      server: { setRequestHandler: () => {} },
     } as unknown as McpServer;
     registerTools(fakeServer, config);
     const tool = registered.get('autocomplete');
@@ -904,6 +913,24 @@ const noSnapshotFetch: FetchLike = async (url: string) => {
   throw new Error('ENOTFOUND');
 };
 
+const deepFetch: FetchLike = async (url: string) => {
+  if (url.includes('/search?')) {
+    const pageno = Number(new URL(url).searchParams.get('pageno') ?? '1');
+    return jsonResponse(
+      pageno === 1
+        ? {
+            query: 'rust async',
+            results: [
+              { title: 'Rust async deep dive', url: 'https://r.test/1', content: 'c', score: 5 },
+              { title: 'unrelated', url: 'https://r.test/2', content: 'c', score: 1 },
+            ],
+          }
+        : { query: 'q', results: [] },
+    );
+  }
+  return new Response(HTML_PAGE, { status: 200, headers: { 'content-type': 'text/html' } });
+};
+
 describe('archive fallback', () => {
   const deadUrl = 'https://dead.test/page';
   const snapshotUrl = 'https://web.archive.org/web/2026/https://dead.test/page';
@@ -975,6 +1002,7 @@ describe('crawl_site wiring', () => {
       registerTool: (name: string, toolConfig: { inputSchema?: unknown }) => {
         registered.set(name, toolConfig);
       },
+      server: { setRequestHandler: () => {} },
     } as unknown as McpServer;
     registerTools(fakeServer, config);
     expect(registered.has('crawl_site')).toBe(true);
@@ -987,5 +1015,84 @@ describe('crawl_site wiring', () => {
     });
     expect(text).toContain('[ref:3] Doc');
     expect(text).toContain('UNTRUSTED_WEB_CONTENT');
+  });
+});
+
+describe('deep_search and the task family', () => {
+  const TASK_CAPS = {
+    'io.modelcontextprotocol/clientCapabilities': {
+      extensions: { 'io.modelcontextprotocol/tasks': {} },
+    },
+  };
+
+  it('runs inline without the tasks capability', async () => {
+    const result = await handleDeepSearch(
+      config,
+      deepSearchInput.parse({ query: 'rust async', max_iterations: 1 }),
+      { fetchImpl: deepFetch },
+    );
+    const toolResult = result as { isError?: boolean; content: { text: string }[] };
+    expect(toolResult.isError).toBeUndefined();
+    expect(toolResult.content[0]?.text).toContain('Deep search dossier');
+    expect(result).toHaveProperty('structuredContent');
+  });
+
+  it('returns a CreateTaskResult to a tasks-capable request and completes', async () => {
+    const store = new TaskStore();
+    const result = await handleDeepSearch(
+      config,
+      deepSearchInput.parse({ query: 'rust async', max_iterations: 1, sources_per_iteration: 1 }),
+      { fetchImpl: deepFetch, tasks: store },
+      { mcpReq: { envelope: TASK_CAPS } },
+    );
+    const task = result as {
+      resultType?: string;
+      taskId?: string;
+      status?: string;
+      pollIntervalMs?: number;
+    };
+    expect(task.resultType).toBe('task');
+    expect(task.status).toBe('working');
+    expect(task.pollIntervalMs).toBeGreaterThan(0);
+    let record = store.get(task.taskId ?? '');
+    for (let i = 0; i < 100 && record?.status !== 'completed'; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      record = store.get(task.taskId ?? '');
+    }
+    expect(record?.status).toBe('completed');
+    expect(record?.result).toHaveProperty('content');
+    expect(record?.result).toHaveProperty('structuredContent');
+  });
+
+  it('serves the task family through the custom-handler seam', () => {
+    const handlers = new Map<string, (params: unknown) => unknown>();
+    const store = new TaskStore();
+    const fakeServer = {
+      registerTool: () => {},
+      server: {
+        setRequestHandler: (
+          method: string,
+          _schemas: unknown,
+          handler: (params: unknown) => unknown,
+        ) => {
+          handlers.set(method, handler);
+        },
+      },
+    } as unknown as McpServer;
+    registerTools(fakeServer, config, { tasks: store });
+    expect([...handlers.keys()].toSorted()).toEqual(['tasks/cancel', 'tasks/get']);
+
+    const record = store.create('working');
+    expect(handlers.get('tasks/get')?.({ taskId: record.taskId })).toMatchObject({
+      resultType: 'complete',
+      status: 'working',
+      statusMessage: 'working',
+    });
+    expect(handlers.get('tasks/cancel')?.({ taskId: record.taskId })).toEqual({
+      resultType: 'complete',
+    });
+    expect(store.get(record.taskId)?.status).toBe('cancelled');
+    expect(() => handlers.get('tasks/get')?.({ taskId: 'unknown' })).toThrow(/Unknown task/);
+    expect(() => handlers.get('tasks/cancel')?.({ taskId: 'unknown' })).toThrow(/Unknown task/);
   });
 });

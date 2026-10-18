@@ -486,6 +486,55 @@ async function main() {
       );
     }
 
+    // 4e-deep. deep_search inline (no tasks capability): bounded dossier
+    const deepCall = await request(serverProcess, 'tools/call', {
+      name: 'deep_search',
+      arguments: { query: 'searxng metasearch', max_iterations: 1, sources_per_iteration: 1 },
+    });
+    assert(!deepCall.error && !deepCall.result?.isError, 'deep_search inline call succeeds');
+    assert(
+      /Deep search dossier/.test(deepCall.result?.content?.[0]?.text ?? ''),
+      'deep_search returns a cited dossier',
+    );
+
+    // 4e-tasks. task-augmented deep_search: CreateTaskResult → tasks/get → completed
+    const taskCall = await request(serverProcess, 'tools/call', {
+      name: 'deep_search',
+      arguments: { query: 'searxng metasearch', max_iterations: 1, sources_per_iteration: 1 },
+      _meta: {
+        'io.modelcontextprotocol/clientCapabilities': {
+          extensions: { 'io.modelcontextprotocol/tasks': {} },
+        },
+      },
+    });
+    const taskResult = taskCall.result;
+    assert(
+      taskResult?.resultType === 'task',
+      `tasks-capable deep_search returns a task handle (got ${taskResult?.resultType})`,
+    );
+    const taskId = taskResult.taskId;
+    assert(typeof taskId === 'string' && taskId.length > 0, 'task handle carries a taskId');
+    let task;
+    for (let i = 0; i < 60; i += 1) {
+      const poll = await request(serverProcess, 'tasks/get', { taskId });
+      if (poll.error) fail(`tasks/get errored: ${JSON.stringify(poll.error)}`);
+      task = poll.result;
+      if (['completed', 'failed', 'cancelled'].includes(task?.status)) break;
+      await new Promise((resolve) => setTimeout(resolve, Number(task?.pollIntervalMs ?? 500)));
+    }
+    assert(
+      task?.status === 'completed',
+      `task reaches completed (got ${task?.status}: ${task?.statusMessage ?? ''})`,
+    );
+    assert(
+      Array.isArray(task?.result?.content) &&
+        (task.result.content[0]?.text ?? '').includes('Deep search dossier'),
+      'completed task carries the dossier result',
+    );
+
+    const unknownTask = await request(serverProcess, 'tasks/get', { taskId: 'not-a-task' });
+    assert(unknownTask.error !== undefined, 'tasks/get of an unknown id is a JSON-RPC error');
+
     // 4f. paper_search against the scientific publications category
     const paperCall = await request(serverProcess, 'tools/call', {
       name: 'paper_search',

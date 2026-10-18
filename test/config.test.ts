@@ -491,3 +491,29 @@ describe('SEARXNG_USERNAME without SEARXNG_PASSWORD', () => {
     expect(warnings).toHaveLength(0);
   });
 });
+
+describe('SEARXNG_SYNTHESIS_URL / _MODEL', () => {
+  it('accepts an http/https synthesis endpoint and keeps its path', () => {
+    const warnings: string[] = [];
+    const config = loadConfig(
+      {
+        SEARXNG_SYNTHESIS_URL: 'https://llm.test/v1/chat/completions',
+        SEARXNG_SYNTHESIS_MODEL: 'llama3',
+      },
+      '0.0.0',
+      (message) => warnings.push(message),
+    );
+    expect(config.synthesisUrl).toBe('https://llm.test/v1/chat/completions');
+    expect(config.synthesisModel).toBe('llama3');
+    expect(warnings).toHaveLength(0);
+  });
+
+  it('warns and unsets a non-http synthesis endpoint', () => {
+    const warnings: string[] = [];
+    const config = loadConfig({ SEARXNG_SYNTHESIS_URL: 'ftp://llm.test' }, '0.0.0', (message) =>
+      warnings.push(message),
+    );
+    expect(config.synthesisUrl).toBeUndefined();
+    expect(warnings.join('\n')).toMatch(/SEARXNG_SYNTHESIS_URL/);
+  });
+});

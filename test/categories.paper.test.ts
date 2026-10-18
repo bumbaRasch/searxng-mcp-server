@@ -191,8 +191,8 @@ describe('paper schemas', () => {
 });
 
 describe('TOOL_NAMES parity', () => {
-  it('expects 12 tools including paper_search', () => {
-    expect(TOOL_NAMES).toHaveLength(12);
+  it('expects 13 tools including paper_search', () => {
+    expect(TOOL_NAMES).toHaveLength(13);
     expect(TOOL_NAMES).toContain('paper_search');
   });
 });
@@ -209,6 +209,7 @@ function registeredPaperHandler(deps: ToolDeps = {}): (args: unknown) => Promise
     registerTool: (name: string, _config: unknown, handler: unknown) => {
       registered.push({ name, handler });
     },
+    server: { setRequestHandler: () => {} },
   } as unknown as McpServer;
   registerTools(fakeServer, makeConfig(), deps);
   const entry = registered.find((tool) => tool.name === 'paper_search');
