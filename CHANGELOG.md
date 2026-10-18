@@ -7,6 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Extension advertisement** — the server declares its three 2026-07-28
+  extensions in `capabilities.extensions` (`src/server.ts`):
+  `io.modelcontextprotocol/tasks`, `io.modelcontextprotocol/skills` and
+  `io.modelcontextprotocol/ui`, each with an empty settings object — the
+  specs' "supported, no server-side settings" shape (`directoryRead` is
+  omitted because `resources/directory/read` is not implemented). Protocol
+  basis: ext-skills makes the skills declaration a MUST, and per
+  extensions/overview a client opts in per-request only after observing the
+  declaration — without it the supporting side must revert to core behavior
+  or reject. The SDK renders the same object into both `initialize` and
+  `server/discover` responses; a test pins the exact initialize shape.
+- **MCP Registry publishing** — `release.yml` publishes `server.json` to the
+  official MCP Registry right after `npm publish` via GitHub OIDC
+  (`mcp-publisher login github-oidc` → `publish`): no dedicated secret
+  (`id-token: write` was already granted), and the manual-JWT failure mode —
+  a token expired between releases — is gone. The registry hosts metadata
+  only and requires the npm package to exist first.
+- **Registry validation in CI** — the `build` job validates `server.json`
+  with `mcp-publisher validate` (v1.8.1 tarball, sha256-checked before use),
+  so registry-rejection causes like the 100-char `description` limit now
+  fail a PR instead of surfacing at publish time. The pin is raised by hand:
+  it is a `run:` step, which Renovate's `pinGitHubActionDigests` does not
+  manage (an outdated binary fails against the registry with
+  "invalid audience").
+- **Version sync on release** — `pnpm version` lifecycle hooks: `preversion`
+  runs the lint/typecheck/test gate, `version` runs the new
+  `scripts/sync-version.mjs` (rewrites `src/version.ts` and both
+  `server.json` version fields, preserving their formatting byte-for-byte)
+  and `git add`s the synced files into the release commit, `postversion`
+  pushes so the `v*` tag triggers the release workflow. A version bump no
+  longer leaves `src/version.ts`/`server.json` stale.
+- **e2e conformance assertions** — both e2e suites assert that the three
+  declared extensions are advertised: `initialize` over stdio and
+  `server/discover` over HTTP.
+
+### Changed
+
+- Internal refactor: `src/schemas.ts` split into `src/schemas/` — eight
+  per-consumer zod modules with no barrel (`search`, `fetch`,
+  `search-and-fetch`, `mappers`, `doctor`, `list-engines`, `crawl`,
+  `deep-search`; importers go to the concrete module) — and the tasks wire
+  side (`CreateTaskResult` construction, `tasks/get`/`tasks/cancel`
+  handlers, the `-32021` capability gate) moved from `tools.ts` into
+  `tasks.ts`. Wire behavior unchanged.
+- Documentation brought in line with the code: `docs/design.md` documents
+  the extension declarations and the corrected `io.modelcontextprotocol/ui`
+  id, and drops the "replicas scale horizontally" claim; `docs/http.md`
+  gains a "Scaling behind a load balancer" section (the three process-scope
+  stores — citation refs, crawled pages, tasks — are not shared across
+  replicas; pick sticky routing or an external store before the first LB
+  deployment); `docs/extending.md` gains a "Young extensions policy" (wire
+  pinned to concrete spec editions, quarterly upstream reconciliation, SDK
+  updates are deliberate — never silent Renovate merges).
+
+### Fixed
+
+- Nightly e2e flake: `paper_search` in both e2e suites now retries
+  epidemic-shaped upstream failures — a network-ish `isError` (timeout /
+  network / HTTP 5xx) or a clean call with an empty `results[]` — up to
+  three times with 2 s/5 s backoff. Deterministic tool errors still fail
+  immediately in both suites; a JSON-RPC error throws immediately over HTTP
+  (`client.callTool` rejects and nothing catches it), while in the stdio
+  suite it is retried like an empty result before the assert fails.
+- Comments and docs no longer name the MCP Apps extension by its superseded
+  id `io.modelcontextprotocol/apps`: the stable ext-apps spec (2026-01-26)
+  identifies it as `io.modelcontextprotocol/ui`.
+
 ## [1.0.1] - 2026-10-18
 
 > Why not 1.0.0? The npm registry permanently blocks publishing `searxng-mcp-server@1.0.0`:

@@ -41,9 +41,23 @@ Beyond tools, the server exposes observability resources
 (`skill://fact-check/SKILL.md`, `skill://literature-review/SKILL.md`,
 `skill://news-monitoring/SKILL.md`) per `io.modelcontextprotocol/skills`,
 an MCP Apps gallery (`ui://searxng-gallery/app.html`) per
-`io.modelcontextprotocol/apps`, and the `tasks/get`/`tasks/cancel`/
+`io.modelcontextprotocol/ui`, and the `tasks/get`/`tasks/cancel`/
 `skills/list`/`skills/get` methods through the SDK's explicit-schema
 custom-method seam.
+
+Those three extensions are also **declared**: `capabilities.extensions` in
+the `McpServer` options (`src/server.ts`) lists exactly
+`io.modelcontextprotocol/tasks`, `io.modelcontextprotocol/skills` and
+`io.modelcontextprotocol/ui`, each with an empty settings object — the
+specs' "supported, no server-side settings" shape (skills is a MUST in
+ext-skills; `directoryRead` is omitted because `resources/directory/read`
+is not implemented). The SDK renders the same object into both
+`initialize` and `server/discover` responses, and a test pins the
+initialize shape (`test/server.test.ts`). Declaring obligates answering:
+all served methods are listed above, and the tasks side additionally
+gates per request — a client whose `_meta` envelope does not declare
+`io.modelcontextprotocol/tasks` gets `-32021` with `requiredCapabilities`
+on `tasks/get`/`tasks/cancel` (`src/tasks.ts`).
 
 The server speaks MCP over **stdio** (default) or **Streamable HTTP**
 (opt-in, `SEARXNG_TRANSPORT=http` / `--transport http`); the companion
@@ -75,8 +89,9 @@ only `src/index.ts` differs:
   `node:http` and the SDK's `createMcpHandler` in `legacy: 'reject'` mode:
   the endpoint speaks the **2026-07-28 protocol revision only** (per-request
   `_meta` envelopes, no `Mcp-Session-Id` sessions — serving is stateless,
-  one fresh `McpServer` per request via the factory, so replicas scale
-  horizontally). 2025-era requests are rejected with an
+  one fresh `McpServer` per request via the factory, though the
+  session-continuity stores described below stay process-scoped). 2025-era
+  requests are rejected with an
   unsupported-protocol-version error naming the supported revisions. Every
   request passes through a bearer-token gate (when `SEARXNG_AUTH_TOKEN` is
   set), then `Host` and `Origin` validation (localhost allowlist plus
@@ -141,9 +156,9 @@ to the pre-aggregation output.
 | --- | --- |
 | `src/index.ts` | bin entrypoint: transport selection (`--transport` flag > `SEARXNG_TRANSPORT` env), stdio wiring, HTTP listener lifecycle, signal handling |
 | `src/server.ts` | `createServer()` — transport-agnostic server factory |
-| `src/tools.ts` | MCP tool registration (registry loop + bespoke tools) + error boundary (sanitizes reflected strings) |
+| `src/tools.ts` | MCP tool registration (registry loop + bespoke handlers) + error boundary (sanitizes reflected strings); task serving lives in `src/tasks.ts` |
 | `src/categories/` | category registry: `types.ts` (`CategoryDeclaration` + `defineCategory`), `shared.ts` (argument atoms, envelope builder, projection bounds, marker sanitizers), one file per category, `index.ts` aggregation |
-| `src/schemas.ts` | cross-tool zod atoms: bespoke tool schemas (search/fetch/list-engines incl. the D14 reading controls), `to*SearchParams` mappers, `z.infer` types; per-category schema handles live in `categories/schemas.ts` |
+| `src/schemas/` | per-consumer zod modules, no barrel — importers go to the concrete module: `search` (search + batch, infobox cap), `fetch` (incl. the D14 reading controls), `search-and-fetch`, `mappers` (`to*SearchParams`), `doctor`, `list-engines`, `crawl`, `deep-search`; `z.infer` types alongside; per-category schema handles live in `categories/schemas.ts` |
 | `src/searxng.ts` | SearXNG HTTP client: failover wrapper, HTML-fallback retry (D13), operator defaults/`max_results` ceiling layer (D16), defensive response projection, batch search, `/config` fan-out + aggregation (D15) |
 | `src/html-results.ts` | opt-in HTML fallback parser (D13): linkedom extraction of the `simple` theme's `article.result` structure into the JSON-API result shape, capped at 30 sanitized items |
 | `src/autocompleter.ts` | `/autocompleter` client, flat-array suggestion projection and markdown rendering |
@@ -166,7 +181,7 @@ to the pre-aggregation output.
 | `src/observability.ts` | `config://searxng` and `stats://engines/errors` resources (Stage 2), defensively projected |
 | `src/crawl.ts` | `crawl_site` (Stage 3): BFS over guarded fetches, robots prefix matching, bounded `PageStore` (`sharedPages`) |
 | `src/archive.ts` | Wayback fallback (Stage 3): dead-link classification + availability-API lookup; policy refusals never trigger it |
-| `src/tasks.ts` | `io.modelcontextprotocol/tasks` store (Stage 4): UUIDv4 ids, immutable terminal states, cooperative cancellation, TTL + bounds |
+| `src/tasks.ts` | `io.modelcontextprotocol/tasks` (Stage 4): store (UUIDv4 ids, immutable terminal states, cooperative cancellation, TTL + bounds) + the wire side — `CreateTaskResult` construction (field passthrough verified against SDK v2.3.1), `tasks/get`/`tasks/cancel` handlers, `-32021` capability gate |
 | `src/deep-search.ts` | `deep_search` loop (Stage 4): search → select → guarded fetch → dossier; optional OpenAI-compatible/Ollama synthesis |
 | `src/skills.ts` | built-in skills (Stage 5): Agent Skills-format bodies as `skill://` resources + `skills/list`/`skills/get` with sha256 manifests |
 | `src/apps.ts` | MCP Apps gallery (Stage 6): `ui://` HTML resource + `GALLERY_TOOL_META` linking image/video tools |
@@ -177,15 +192,19 @@ Dependency direction (per-module, as imported): `config`, `http`, `ssrf`,
 `rerank`, `otel` and the registry core (`categories/types` +
 `categories/shared`, mutually type-only) are leaves. Above them: the category files →
 `categories/shared`/`types` (paper also reuses `general`'s date helper);
-`schemas` → categories; `format` → categories + `schemas`; `searxng` →
-`cache`/`categories`/`html-results`/`http`/`config`/`schemas`; `autocompleter` → `searxng`/`cache`/`format`/`config`;
+`categories/schemas` → `schemas/mappers` → `categories/shared` (one-way:
+mappers does not import categories back); `format` → categories +
+`schemas/{search,search-and-fetch,fetch,crawl,doctor,list-engines}`;
+`searxng` →
+`cache`/`categories`/`html-results`/`http`/`config`/`schemas/{search,list-engines,mappers}`; `autocompleter` → `searxng`/`cache`/`format`/`config`;
 `doctor`/`observability` → `searxng` (+ shared/config types); `crawl` →
-`fetch`/`refs`/`schemas` + `categories/shared`; `archive` → `fetch` (error
+`fetch`/`refs`/`schemas/crawl` + `categories/shared`; `archive` → `fetch` (error
 classification) + `categories/shared`;
-`deep-search` → `searxng`/`fetch`/`otel`; `tasks` → shared (store only);
-`skills`/`apps` → the MCP SDK (+ embedded content); `pdf` → `http`; `fetch` →
-`config`/`ssrf`/`extract`/`markdown`/`pdf`/`http`/`schemas`/`otel` (+ type-only
-`crawl` for the store); `tools` → `config`/`fetch`/`format`/`schemas`/`searxng`/
+`deep-search` → `searxng`/`fetch`/`otel`; `tasks` → `categories/shared`/zod/SDK
+(store + CreateTaskResult wire + RPC handlers); `skills`/`apps` → the MCP SDK
+(+ embedded content); `pdf` → `http`; `fetch` →
+`config`/`ssrf`/`extract`/`markdown`/`pdf`/`http`/`schemas/fetch`/`otel` (+ type-only
+`crawl` for the store); `tools` → `config`/`fetch`/`format`/`schemas/*`/`searxng`/
 `autocompleter`/`categories` plus type-only imports of `http` (`FetchLike`),
 `ssrf` (`LookupAll`) and `cache` (`TtlCache`), and the MCP SDK; `server` →
 `config`/`tools`/`cache`/`icon`/`version`/`observability`/`skills`/`apps`
