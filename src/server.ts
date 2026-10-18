@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/server';
 import { TtlCache } from './cache.js';
 import type { Config } from './config.js';
 import { SERVER_ICONS } from './icon.js';
+import { registerApps } from './apps.js';
 import { registerObservabilityResources } from './observability.js';
 import { registerSkills } from './skills.js';
 import { registerTools, type ToolDeps } from './tools.js';
@@ -28,5 +29,6 @@ export function createServer(config: Config, deps: ToolDeps = {}): McpServer {
   registerTools(server, config, { ...deps, cache });
   registerObservabilityResources(server, config, { ...deps, cache });
   registerSkills(server);
+  registerApps(server);
   return server;
 }

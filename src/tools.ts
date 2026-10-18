@@ -31,6 +31,7 @@ import {
 import type { FetchLike } from './http.js';
 import { TOOL_ICONS } from './icon.js';
 import { sharedRefs, type RefRegistry } from './refs.js';
+import { GALLERY_TOOL_META } from './apps.js';
 import {
   declaresTasksCapability,
   sharedTaskStore,
@@ -491,6 +492,12 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
       continue;
     }
     const handler = categoryToolHandler(entry);
+    // MCP Apps (Stage 6): the gallery renders image/video results in
+    // Apps-capable hosts; everyone else gets the unchanged text output.
+    const appMeta =
+      entry.tool.name === 'image_search' || entry.tool.name === 'video_search'
+        ? { _meta: GALLERY_TOOL_META }
+        : {};
     server.registerTool(
       entry.tool.name,
       {
@@ -502,6 +509,7 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
         outputSchema: entry.envelopeSchema,
         annotations: TOOL_ANNOTATIONS,
         icons: TOOL_ICONS,
+        ...appMeta,
       },
       (args: CategoryToolInput) => handler(config, args, effectiveDeps),
     );
