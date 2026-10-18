@@ -2,25 +2,48 @@
 
 `searxng-mcp-server` is a Model Context Protocol (MCP) server, written in
 TypeScript, that exposes a self-hosted [SearXNG](https://github.com/searxng/searxng)
-instance to MCP clients (OpenCode, Claude, Cursor, …). It provides nine tools:
+instance to MCP clients (OpenCode, Claude, Cursor, …). It provides thirteen
+tools:
 
 - `search` — query SearXNG and return structured + human-readable results
-  (a single query or a 2–5 query batch).
+  (a single query or a 2–5 query batch). Results carry session-stable
+  citation refs; `rerank: true` applies a heuristic reorder (query/title
+  overlap, freshness, domain boosts) on top of the instance ranking.
 - `image_search` — find images: direct file links, optional thumbnails,
-  resolution, format and file size.
+  resolution, format and file size. `_meta.ui` links to the MCP Apps gallery.
 - `news_search` — find recent news articles with a freshness filter.
 - `video_search` — find videos with previews, duration, view counts, embed
-  links and a freshness filter.
+  links and a freshness filter. Apps gallery-backed like `image_search`.
 - `music_search` — find music, including direct audio file links when available.
 - `paper_search` — find scientific publications: abstracts, authors,
   journal/DOI metadata and direct PDF links.
-- `fetch_content` — fetch a URL (HTML page, textual body or text PDF) and
-  return clean Markdown for LLM consumption, with `outline`/`section` reading
-  controls (D14) and offset continuation for long pages.
+- `fetch_content` — fetch a URL or a citation ref (`ref:N`) and return clean
+  Markdown for LLM consumption, with `outline`/`section` reading controls
+  (D14), offset continuation for long pages, and an opt-in Wayback fallback
+  for dead links.
+- `search_and_fetch` — search and immediately fetch the full content of the
+  top results in one call (failed pages degrade to error entries).
+- `crawl_site` — BFS-crawl a site same-origin from a seed URL into a
+  ref-addressed manifest, robots-aware, with content cached for later
+  `fetch_content`.
 - `autocomplete` — query suggestions for a prefix (`/autocompleter`).
 - `list_engines` — the engines and categories enabled on the instance
   (`/config`); with several `SEARXNG_URLS` instances configured, per-instance
   engines plus their common intersection (D15).
+- `doctor` — diagnose the instance: JSON API probe, `/config` reachability,
+  unresponsive engines, limiter state.
+- `deep_search` — iterative cited dossier (search → fetch → optional
+  synthesis); tasks-aware, running as a pollable `io.modelcontextprotocol/tasks`
+  task when the client negotiated the extension.
+
+Beyond tools, the server exposes observability resources
+(`config://searxng`, `stats://engines/errors`), three built-in skills
+(`skill://fact-check/SKILL.md`, `skill://literature-review/SKILL.md`,
+`skill://news-monitoring/SKILL.md`) per `io.modelcontextprotocol/skills`,
+an MCP Apps gallery (`ui://searxng-gallery/app.html`) per
+`io.modelcontextprotocol/apps`, and the `tasks/get`/`tasks/cancel`/
+`skills/list`/`skills/get` methods through the SDK's explicit-schema
+custom-method seam.
 
 The server speaks MCP over **stdio** (default) or **Streamable HTTP**
 (opt-in, `SEARXNG_TRANSPORT=http` / `--transport http`); the companion
@@ -62,8 +85,14 @@ only `src/index.ts` differs:
   without a token refuses startup (fail-fast in `loadConfig`, not a
   warning). See [HTTP security model](#http-transport) below.
 
-The server is a thin, stateless adapter. SearXNG aggregates upstream search
-engines; `fetch_content` retrieves and extracts a single page.
+The server is a thin adapter: serving is stateless (one fresh `McpServer`
+per HTTP request), but three session-scoped stores deliberately live at
+process scope so a ref minted on one request resolves on the next — the
+citation ref registry (`sharedRefs`), the crawled-page store (`sharedPages`)
+and the task store (`sharedTaskStore`). All three are bounded and TTL'd where
+aging matters. SearXNG aggregates upstream search engines; `fetch_content`
+retrieves and extracts a single page (or serves a crawled one from the
+store).
 
 Nine tools are exposed. The category tools — `search`, `image_search`,
 `news_search`, `video_search`, `music_search`, `paper_search` —
@@ -130,19 +159,35 @@ to the pre-aggregation output.
 | `src/http-server.ts` | Streamable HTTP stack: `createMcpHandler` (modern-only), bearer gate, Host/Origin validation, passive `/healthz`, `node:http` wiring |
 | `src/icon.ts` | MCP `icons` metadata (self-contained data URIs) for the server and every tool |
 | `src/version.ts` | `VERSION` constant (kept in sync with package.json by a test) |
+| `src/refs.ts` | citation ref registry (Stage 1): bounded, monotonic, process-scope URL↔ref map; `sharedRefs` singleton |
+| `src/rerank.ts` | heuristic rerank (Stage 2): pure scoring (query/title overlap, freshness decay, domain boosts), stable ties |
+| `src/doctor.ts` | instance doctor (Stage 2): primary-instance probes (JSON API, `/config`, unresponsive engines, limiter) into structured checks |
+| `src/observability.ts` | `config://searxng` and `stats://engines/errors` resources (Stage 2), defensively projected |
+| `src/crawl.ts` | `crawl_site` (Stage 3): BFS over guarded fetches, robots prefix matching, bounded `PageStore` (`sharedPages`) |
+| `src/archive.ts` | Wayback fallback (Stage 3): dead-link classification + availability-API lookup; policy refusals never trigger it |
+| `src/tasks.ts` | `io.modelcontextprotocol/tasks` store (Stage 4): UUIDv4 ids, immutable terminal states, cooperative cancellation, TTL + bounds |
+| `src/deep-search.ts` | `deep_search` loop (Stage 4): search → select → guarded fetch → dossier; optional OpenAI-compatible/Ollama synthesis |
+| `src/skills.ts` | built-in skills (Stage 5): Agent Skills-format bodies as `skill://` resources + `skills/list`/`skills/get` with sha256 manifests |
+| `src/apps.ts` | MCP Apps gallery (Stage 6): `ui://` HTML resource + `GALLERY_TOOL_META` linking image/video tools |
+| `src/otel.ts` | OTel trace passthrough (Stage 7, SEP-414): validated `traceparent` from the `_meta` envelope, propagated via AsyncLocalStorage |
 
 Dependency direction (per-module, as imported): `config`, `http`, `ssrf`,
-`extract`, `markdown`, `version`, `icon`, `cache`, `html-results` and the
-registry core (`categories/types` + `categories/shared`, mutually type-only)
-are leaves. Above them: the category files →
+`extract`, `markdown`, `version`, `icon`, `cache`, `html-results`, `refs`,
+`rerank`, `otel` and the registry core (`categories/types` +
+`categories/shared`, mutually type-only) are leaves. Above them: the category files →
 `categories/shared`/`types` (paper also reuses `general`'s date helper);
 `schemas` → categories; `format` → categories + `schemas`; `searxng` →
 `cache`/`categories`/`html-results`/`http`/`config`/`schemas`; `autocompleter` → `searxng`/`cache`/`format`/`config`;
-`pdf` → `http`; `fetch` → `config`/`ssrf`/`extract`/`markdown`/`pdf`/
-`http`/`schemas`; `tools` → `config`/`fetch`/`format`/`schemas`/`searxng`/
+`doctor`/`observability` → `searxng` (+ shared/config types); `crawl` →
+`fetch`/`refs`/`schemas`; `archive` → `fetch` (error classification);
+`deep-search` → `searxng`/`fetch`/`otel`; `tasks` → shared (store only);
+`skills`/`apps` → the MCP SDK (+ embedded content); `pdf` → `http`; `fetch` →
+`config`/`ssrf`/`extract`/`markdown`/`pdf`/`http`/`schemas`/`otel` (+ type-only
+`crawl` for the store); `tools` → `config`/`fetch`/`format`/`schemas`/`searxng`/
 `autocompleter`/`categories` plus type-only imports of `http` (`FetchLike`),
 `ssrf` (`LookupAll`) and `cache` (`TtlCache`), and the MCP SDK; `server` →
-`config`/`tools`/`cache`/`icon`/`version` (+ MCP); `http-server` →
+`config`/`tools`/`cache`/`icon`/`version`/`observability`/`skills`/`apps`
+(+ MCP); `http-server` →
 `config`/`server`/`tools` (types) (+ MCP server root and the
 `@modelcontextprotocol/node` adapter); `index` → `argv`/`config`/
 `http-server`/`server`/`version` (+ MCP stdio transport). All network seams (`FetchLike`, DNS `lookup`) are
@@ -276,10 +321,16 @@ without new evidence):
   solver services) stay out of scope.
 - **OAuth for the HTTP transport** — a static bearer token suffices for a
   self-hosted, single-operator deployment.
-- **Site crawling / `crawl_site`, JavaScript rendering** — out of scope by
-  design; `fetch_content` reads one page.
-- **ML reranking, Ollama synthesis, domain statistics** — dependency weight
-  and philosophy (a thin, stateless adapter over SearXNG).
+- **JavaScript rendering / scraping tiers for crawling** — `crawl_site`
+  (v1.0.0) crawls static HTML through the same guarded pipeline as
+  `fetch_content`; JS rendering, solver services and depth beyond same-origin
+  stay out of scope.
+- **ML reranking** — the shipped `rerank` is a transparent heuristic
+  (overlap/freshness/domain weights in `src/rerank.ts`); model-based reranking
+  stays out (dependency weight).
+- **deep_search synthesis without operator config** — `SEARXNG_SYNTHESIS_URL`
+  is opt-in and the dossier degrades gracefully; the server never requires a
+  client-side LLM (Sampling is deprecated in 2026-07-28).
 - **Random public SearXNG instances** — most disable the JSON API and 429
   aggressively; self-hosted is this project's core privacy stance.
 - **Per-domain blocklists / learning** — no current need; SearXNG already

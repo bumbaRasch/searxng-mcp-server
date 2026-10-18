@@ -118,11 +118,11 @@ async function main() {
     assert(discover?.capabilities?.tools !== undefined, 'server/discover advertises tools');
     assert(
       discover?.ttlMs === 3_600_000 && discover?.cacheScope === 'public',
-      `server/discover carries the cache hint (ttlMs=${discover?.ttlMs}, scope=${discover?.cacheScope})`,
+      `server/discover carries the cache hint (ttlMs=${String(discover?.ttlMs)}, scope=${String(discover?.cacheScope)})`,
     );
     assert(
       discover?._meta?.['io.modelcontextprotocol/serverInfo']?.name === 'searxng-mcp-server',
-      'server/discover carries serverInfo',
+      'server/discover carries serverInfo', // eslint-disable-line no-underscore-dangle
     );
     const listMeta = await client.request(
       { method: 'tools/list', params: {} },
@@ -130,7 +130,7 @@ async function main() {
     );
     assert(
       listMeta?.ttlMs === 300_000 && listMeta?.cacheScope === 'public',
-      `tools/list carries the cache hint (ttlMs=${listMeta?.ttlMs}, scope=${listMeta?.cacheScope})`,
+      `tools/list carries the cache hint (ttlMs=${String(listMeta?.ttlMs)}, scope=${String(listMeta?.cacheScope)})`,
     );
 
     const search = await client.callTool({ name: 'search', arguments: { query: 'searxng' } });
