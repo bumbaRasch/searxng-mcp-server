@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.0.0] - 2026-10-18
+## [1.0.1] - 2026-10-18
+
+> Why not 1.0.0? The npm registry permanently blocks publishing `searxng-mcp-server@1.0.0`:
+> a previous, since-removed package under this name published a `1.0.0` in April 2026 (before
+> this package existed), and npm never allows re-publishing an existing version string. The
+> release ships as 1.0.1; the GitHub tag is `v1.0.1`.
 
 The "wow edition": one release, seven feature waves, all built on the
 2026-07-28 protocol revision (stateless serving, no deprecated primitives —
@@ -273,8 +278,8 @@ No 0.3.x compatibility shims (pre-1.0 minor, per the release policy):
 - Bundled SearXNG Docker stack (pinned image, loopback-only) and end-to-end verification script.
 - 260 unit tests, CI matrix (Node 22.19/24/26), type-aware linting, coverage.
 
-[Unreleased]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v0.5.2...v1.0.0
+[Unreleased]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v0.5.2...v1.0.1
 [0.5.2]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v0.4.0...v0.5.0
