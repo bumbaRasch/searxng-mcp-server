@@ -535,6 +535,45 @@ async function main() {
     const unknownTask = await request(serverProcess, 'tasks/get', { taskId: 'not-a-task' });
     assert(unknownTask.error !== undefined, 'tasks/get of an unknown id is a JSON-RPC error');
 
+    // 4e-skills. skills over MCP: resources/list advertises the skill://
+    // URIs, resources/read serves the SKILL.md bodies, skills/list and
+    // skills/get return complete manifests.
+    const skillUris = [
+      'skill://fact-check/SKILL.md',
+      'skill://literature-review/SKILL.md',
+      'skill://news-monitoring/SKILL.md',
+    ];
+    for (const uri of skillUris) {
+      assert(resourceUris.includes(uri), `resources/list advertises "${uri}"`);
+    }
+    const skillRead = await request(serverProcess, 'resources/read', {
+      uri: 'skill://fact-check/SKILL.md',
+    });
+    assert(!skillRead.error, 'resources/read of a skill succeeds');
+    const skillText = skillRead.result?.contents?.[0]?.text ?? '';
+    assert(
+      skillText.startsWith('---') && /name: fact-check/.test(skillText),
+      'skill resource serves the SKILL.md with frontmatter',
+    );
+    const skillsList = await request(serverProcess, 'skills/list', {});
+    assert(!skillsList.error, 'skills/list succeeds');
+    const skills = skillsList.result?.skills ?? [];
+    assert(skills.length === 3, `skills/list returns the three built-ins (got ${skills.length})`);
+    const firstSkill = skills[0];
+    assert(
+      firstSkill?.frontmatter?.name && firstSkill?.resources?.[0]?.digest?.startsWith('sha256:'),
+      'skill entries carry frontmatter and digests',
+    );
+    const skillGet = await request(serverProcess, 'skills/get', { uri: firstSkill.uri });
+    assert(
+      !skillGet.error && skillGet.result?.skill?.uri === firstSkill.uri,
+      'skills/get returns the requested entry',
+    );
+    const unknownSkill = await request(serverProcess, 'skills/get', {
+      uri: 'skill://nope/SKILL.md',
+    });
+    assert(unknownSkill.error !== undefined, 'skills/get of an unknown URI is a JSON-RPC error');
+
     // 4f. paper_search against the scientific publications category
     const paperCall = await request(serverProcess, 'tools/call', {
       name: 'paper_search',

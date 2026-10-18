@@ -3,6 +3,7 @@ import { TtlCache } from './cache.js';
 import type { Config } from './config.js';
 import { SERVER_ICONS } from './icon.js';
 import { registerObservabilityResources } from './observability.js';
+import { registerSkills } from './skills.js';
 import { registerTools, type ToolDeps } from './tools.js';
 import { VERSION } from './version.js';
 
@@ -26,5 +27,6 @@ export function createServer(config: Config, deps: ToolDeps = {}): McpServer {
       : undefined);
   registerTools(server, config, { ...deps, cache });
   registerObservabilityResources(server, config, { ...deps, cache });
+  registerSkills(server);
   return server;
 }
