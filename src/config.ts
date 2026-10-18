@@ -38,6 +38,10 @@ export interface Config {
   rerankBoostDomains: string[];
   /** Wayback fallback for dead `fetch_content` links (`SEARXNG_ARCHIVE_FALLBACK`, Stage 3). */
   archiveFallback: boolean;
+  /** OpenAI-compatible synthesis endpoint for deep_search (`SEARXNG_SYNTHESIS_URL`); never logged. */
+  synthesisUrl?: string;
+  /** Model name for the synthesis endpoint (`SEARXNG_SYNTHESIS_MODEL`). */
+  synthesisModel?: string;
 }
 
 type Env = Record<string, string | undefined>;
@@ -296,6 +300,19 @@ export function loadConfig(env: Env, version: string, warn: Warn = () => {}): Co
   if (env.SEARXNG_AUTH_TOKEN && env.SEARXNG_AUTH_TOKEN.trim() !== '') {
     config.authToken = env.SEARXNG_AUTH_TOKEN;
   }
+  const synthesisUrl = env.SEARXNG_SYNTHESIS_URL?.trim();
+  if (synthesisUrl !== undefined && synthesisUrl !== '') {
+    const parsed = parseInstanceUrl(synthesisUrl);
+    if ('reason' in parsed) {
+      warn(
+        `SEARXNG_SYNTHESIS_URL: ignoring "${redactUrl(synthesisUrl)}" (${parsed.reason}), unset`,
+      );
+    } else {
+      config.synthesisUrl = normalizeInstanceOrigin(parsed.url);
+    }
+  }
+  const synthesisModel = env.SEARXNG_SYNTHESIS_MODEL?.trim();
+  if (synthesisModel !== undefined && synthesisModel !== '') config.synthesisModel = synthesisModel;
   assertHttpBindSafety(config.transport, config);
   return config;
 }

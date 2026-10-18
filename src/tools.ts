@@ -1,4 +1,5 @@
 import type { McpServer } from '@modelcontextprotocol/server';
+import * as z from 'zod/v4';
 import {
   autocomplete,
   autocompleteInput,
@@ -9,12 +10,14 @@ import {
 import type { TtlCache } from './cache.js';
 import type { Config } from './config.js';
 import { crawlSite, sharedPages, type PageStore } from './crawl.js';
+import { deepSearch, DeepSearchCancelled, type DeepSearchDossier } from './deep-search.js';
 import { runDoctor } from './doctor.js';
 import { fetchContent } from './fetch.js';
 import { isDeadLinkError, findArchivedSnapshot } from './archive.js';
 import {
   formatCategoryResults,
   formatCrawl,
+  formatDeepSearch,
   formatDoctor,
   formatFetchedPage,
   formatListEngines,
@@ -28,6 +31,12 @@ import {
 import type { FetchLike } from './http.js';
 import { TOOL_ICONS } from './icon.js';
 import { sharedRefs, type RefRegistry } from './refs.js';
+import {
+  declaresTasksCapability,
+  sharedTaskStore,
+  type TaskRecord,
+  type TaskStore,
+} from './tasks.js';
 import type { LookupAll } from './ssrf.js';
 import { categoryDefinitions } from './categories/index.js';
 import { categoryInputSchema } from './categories/shared.js';
@@ -39,6 +48,7 @@ import { videoCategory } from './categories/videos.js';
 import {
   crawlInput,
   crawlOutput,
+  deepSearchInput,
   doctorInput,
   doctorOutput,
   fetchInput,
@@ -54,6 +64,7 @@ import {
   type CategoryToolInput,
   type CrawlInput,
   type CrawlResponse,
+  type DeepSearchInput,
   type DoctorInput,
   type DoctorResponse,
   type FetchInput,
@@ -85,6 +96,8 @@ export interface ToolDeps {
   refs?: RefRegistry | undefined;
   /** Crawled-page store; registerTools defaults it to the process-wide sharedPages. */
   pages?: PageStore | undefined;
+  /** Task store backing io.modelcontextprotocol/tasks; registerTools defaults to sharedTaskStore. */
+  tasks?: TaskStore | undefined;
 }
 
 const UNTRUSTED_SUFFIX =
@@ -221,6 +234,100 @@ export const handleCrawl = createCategoryHandler<CrawlInput, CrawlResponse>(
   formatCrawl,
 );
 
+/** io.modelcontextprotocol/tasks surface (Stage 4): CreateTaskResult for a
+ * negotiated client, inline run otherwise. NO client-side sampling — Sampling
+ * is deprecated in the 2026-07-28 revision; synthesis is server-side only. */
+export interface DeepSearchToolContext {
+  mcpReq?: { envelope?: unknown };
+}
+
+export async function handleDeepSearch(
+  config: Config,
+  args: DeepSearchInput,
+  deps: ToolDeps = {},
+  ctx?: DeepSearchToolContext,
+): Promise<ToolResult<DeepSearchDossier> | CreateTaskWireResult> {
+  const store = deps.tasks ?? sharedTaskStore;
+  const run = (extra: {
+    signal?: AbortSignal | undefined;
+    onProgress?: (message: string) => void | undefined;
+  }): Promise<DeepSearchDossier> =>
+    deepSearch(config, args.query, {
+      maxIterations: args.max_iterations,
+      sourcesPerIteration: args.sources_per_iteration,
+      maxResults: args.max_results,
+      refs: deps.refs ?? sharedRefs,
+      fetchImpl: deps.fetchImpl,
+      cache: deps.cache,
+      signal: extra.signal,
+      onProgress: extra.onProgress,
+    });
+
+  const inline = async (): Promise<ToolResult<DeepSearchDossier>> => {
+    try {
+      const dossier = await run({});
+      return {
+        content: [{ type: 'text', text: formatDeepSearch(dossier) }],
+        structuredContent: sanitizeStructured(dossier),
+      };
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      return {
+        content: [{ type: 'text', text: sanitizeToolError(`Deep search failed: ${detail}`) }],
+        isError: true,
+      };
+    }
+  };
+
+  if (!declaresTasksCapability(ctx?.mcpReq?.envelope)) return inline();
+
+  // Task mode: durably create the task BEFORE the handle leaves the server.
+  const record = store.create('deep search started');
+  const signal = store.signalFor(record.taskId);
+  void run({ signal, onProgress: (message) => store.progress(record.taskId, message) }).then(
+    (dossier) =>
+      store.complete(record.taskId, {
+        content: [{ type: 'text', text: formatDeepSearch(dossier) }],
+        structuredContent: sanitizeStructured(dossier),
+      }),
+    (error: unknown) => {
+      if (error instanceof DeepSearchCancelled) return; // cancelled status already set
+      const detail = error instanceof Error ? error.message : String(error);
+      store.fail(record.taskId, { code: -32603, message: sanitizeToolError(detail) });
+    },
+  );
+  return createTaskResult(record);
+}
+
+/** Wire shape of a CreateTaskResult (resultType: "task"). Extra fields ride
+ * through the SDK's CallToolResult passthrough (verified against SDK v2.3.1). */
+export interface CreateTaskWireResult {
+  content: { type: 'text'; text: string }[];
+  resultType: 'task';
+  taskId: string;
+  status: TaskRecord['status'];
+  statusMessage?: string | undefined;
+  createdAt: string;
+  lastUpdatedAt: string;
+  ttlMs: number | null;
+  pollIntervalMs?: number | undefined;
+}
+
+/** CreateTaskResult (resultType: "task") seeded from the store record. */
+export function createTaskResult(record: TaskRecord): CreateTaskWireResult {
+  return {
+    content: [],
+    resultType: 'task',
+    taskId: record.taskId,
+    status: record.status,
+    statusMessage: record.statusMessage,
+    createdAt: record.createdAt,
+    lastUpdatedAt: record.lastUpdatedAt,
+    ttlMs: record.ttlMs,
+    pollIntervalMs: record.pollIntervalMs,
+  };
+}
+
 /** D15: the primary instance's listing plus the aggregation summary; the full
  * per-instance engine lists live in the structured content. */
 export function renderListEngines(response: ListEnginesResponse): string {
@@ -352,12 +459,18 @@ export const TOOL_NAMES = [
   'list_engines',
   'doctor',
   'crawl_site',
+  'deep_search',
 ] as const;
 
 export function registerTools(server: McpServer, config: Config, deps: ToolDeps = {}): void {
   // The ref session and page store are process-scope: HTTP serving is
   // stateless per request, so defaults must outlive a single server instance.
-  const effectiveDeps: ToolDeps = { refs: sharedRefs, pages: sharedPages, ...deps };
+  const effectiveDeps: ToolDeps = {
+    refs: sharedRefs,
+    pages: sharedPages,
+    tasks: sharedTaskStore,
+    ...deps,
+  };
   for (const entry of categoryDefinitions) {
     if (entry.tool.name === 'search') {
       // Web search keeps its bespoke slice: user-chosen categories plus the
@@ -482,5 +595,71 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
       icons: TOOL_ICONS,
     },
     (args) => handleCrawl(config, args, effectiveDeps),
+  );
+
+  server.registerTool(
+    'deep_search',
+    {
+      title: 'Deep search dossier (SearXNG)',
+      description: withUntrustedSuffix(
+        'Run an iterative research loop: search, rerank and fetch the top uncited sources through the SSRF guard, then return a cited dossier (optionally synthesized when SEARXNG_SYNTHESIS_URL is configured; without it the dossier lists the excerpts only). With a client that negotiated io.modelcontextprotocol/tasks, the call returns a task handle (resultType task) to poll via tasks/get instead of blocking; without it, the run is bounded inline. Use it for questions that need several sources read, not one page.',
+      ),
+      inputSchema: deepSearchInput,
+      annotations: TOOL_ANNOTATIONS,
+      icons: TOOL_ICONS,
+    },
+    // The task branch returns a CreateTaskResult; the SDK serves it via the
+    // CallToolResult passthrough (wire-verified) but has no type for it.
+    async (args, ctx) =>
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+      (await handleDeepSearch(config, args, effectiveDeps, ctx)) as ToolResult<DeepSearchDossier>,
+  );
+
+  registerTaskHandlers(server, effectiveDeps);
+}
+
+/** Serving seam for the task family (Stage 4): the SDK keeps only
+ * tasks/get and tasks/cancel on the 2026-07-28 wire, served through
+ * explicit-schema custom handlers. Unknown task ids error; there is no
+ * tasks/list by spec. */
+function registerTaskHandlers(server: McpServer, deps: ToolDeps): void {
+  const store = deps.tasks ?? sharedTaskStore;
+  const taskParams = z.object({ taskId: z.string() });
+  const taskResult = z.object({ resultType: z.literal('complete') }).passthrough();
+  type TaskHandlerResult = z.infer<typeof taskResult>;
+
+  server.server.setRequestHandler(
+    'tasks/get',
+    { params: taskParams, result: taskResult },
+    (params) => {
+      const record = store.get(params.taskId);
+      if (record === undefined) {
+        throw new Error(`Unknown task: ${params.taskId}`);
+      }
+      const task: TaskHandlerResult = {
+        resultType: 'complete',
+        taskId: record.taskId,
+        status: record.status,
+        createdAt: record.createdAt,
+        lastUpdatedAt: record.lastUpdatedAt,
+        ttlMs: record.ttlMs,
+      };
+      if (record.statusMessage !== undefined) task.statusMessage = record.statusMessage;
+      if (record.pollIntervalMs !== undefined) task.pollIntervalMs = record.pollIntervalMs;
+      if (record.result !== undefined) task.result = record.result;
+      if (record.error !== undefined) task.error = record.error;
+      return task;
+    },
+  );
+
+  server.server.setRequestHandler(
+    'tasks/cancel',
+    { params: taskParams, result: taskResult },
+    (params) => {
+      if (!store.cancel(params.taskId)) {
+        throw new Error(`Unknown task: ${params.taskId}`);
+      }
+      return { resultType: 'complete' as const };
+    },
   );
 }
