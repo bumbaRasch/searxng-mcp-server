@@ -39,5 +39,32 @@ and registration from it.
 5. **`scripts/e2e.mjs`** — the `TOOL_NAMES` import covers listing; add a live
    call only if the bundled SearXNG has engines for the category.
 
+## Young extensions policy
+
+The wire is pinned to specific spec editions, so new-tool work must not
+silently drift across them:
+
+| Wire piece | Pinned to | Anchor in code |
+|---|---|---|
+| `io.modelcontextprotocol/tasks` and the whole HTTP transport | the 2026-07-28 protocol revision (the `/mcp` endpoint serves that revision only; 2025-era requests get a typed rejection) | `src/tasks.ts`, `src/http-server.ts` |
+| `io.modelcontextprotocol/ui` (MCP Apps) | ext-apps stable 2026-01-26 ("This extension is identified as: io.modelcontextprotocol/ui"); the iframe-handshake gallery assumes it | `src/apps.ts` |
+| `io.modelcontextprotocol/skills` | SEP-2640, Final | `src/skills.ts` |
+| Trace passthrough | SEP-414 | `src/otel.ts` |
+
+Policy:
+
+- **Quarterly reconciliation** with the upstream spec sources — the core
+  protocol + ext-tasks, `modelcontextprotocol/ext-apps`,
+  `modelcontextprotocol/ext-skills`, and SEP-2577's capability-declaration
+  work (the SDK documents that the client capabilities SEP-2577 deprecated as
+  of 2026-07-28 — `roots`, `sampling` — "remain in the specification for at
+  least twelve months", so that window, not a rumor of a breaking change,
+  drives when to react).
+- **SDK updates are deliberate, never a silent Renovate merge.** The code
+  carries wire-verified assumptions against a concrete SDK version — e.g.
+  the `CreateTaskResult` field passthrough in `src/tasks.ts` is commented
+  "verified against SDK v2.3.1". An SDK bump means re-checking every such
+  comment-marked place before merging.
+
 Definition of done: `pnpm lint && pnpm lint:types && pnpm typecheck && pnpm test`
 and the `registerTools` test (which asserts `TOOL_NAMES` parity) is green.
