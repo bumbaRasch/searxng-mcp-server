@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { FetchError } from '../src/fetch.js';
 import { findArchivedSnapshot, isDeadLinkError } from '../src/archive.js';
 
+const fetchError = (cause?: Error): Error => {
+  const error = new TypeError('fetch failed');
+  if (cause !== undefined) (error as { cause?: Error }).cause = cause;
+  return error;
+};
+
 const guardRefusal = new Error(
   'Refusing to fetch "localhost": it resolves to a private or reserved address (127.0.0.1).',
 );
@@ -55,12 +61,6 @@ describe('isDeadLinkError', () => {
 });
 
 describe('findArchivedSnapshot', () => {
-  const fetchError = (cause?: Error): Error => {
-    const error = new TypeError('fetch failed');
-    if (cause !== undefined) (error as { cause?: Error }).cause = cause;
-    return error;
-  };
-
   it('returns undefined when the availability endpoint answers non-ok', async () => {
     const result = await findArchivedSnapshot(
       'https://x.test',
