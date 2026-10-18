@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   crawlSite,
   extractMarkdownLinks,
+  isCrawlResponse,
   PageStore,
   parseRobots,
   type StoredPage,
@@ -198,5 +199,39 @@ describe('crawlSite', () => {
       store: new PageStore(),
     });
     expect(response.crawled).toBe(1);
+  });
+});
+
+describe('crawlSite input validation and helpers', () => {
+  it('rejects an unparsable seed URL', async () => {
+    await expect(
+      crawlSite(config, 'not-a-url', {
+        maxPages: 1,
+        fetchImpl: siteFetch,
+        refs: new RefRegistry(),
+        store: new PageStore(),
+      }),
+    ).rejects.toThrow(/Invalid seed URL/);
+  });
+
+  it('rejects a non-http seed scheme', async () => {
+    await expect(
+      crawlSite(config, 'ftp://site.test/x', {
+        maxPages: 1,
+        fetchImpl: siteFetch,
+        refs: new RefRegistry(),
+        store: new PageStore(),
+      }),
+    ).rejects.toThrow(/Only http\/https/);
+  });
+
+  it('robots policy refuses unparsable URLs', () => {
+    expect(parseRobots('').allows('not a url')).toBe(false);
+  });
+
+  it('isCrawlResponse shape guard', () => {
+    expect(isCrawlResponse({ pages: [] })).toBe(true);
+    expect(isCrawlResponse({ pages: 'no' })).toBe(false);
+    expect(isCrawlResponse('x')).toBe(false);
   });
 });

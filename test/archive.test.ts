@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { FetchError } from '../src/fetch.js';
-import { isDeadLinkError } from '../src/archive.js';
+import { findArchivedSnapshot, isDeadLinkError } from '../src/archive.js';
 
 const guardRefusal = new Error(
   'Refusing to fetch "localhost": it resolves to a private or reserved address (127.0.0.1).',
@@ -51,5 +51,40 @@ describe('isDeadLinkError', () => {
         }),
       ),
     ).toBe(false);
+  });
+});
+
+describe('findArchivedSnapshot', () => {
+  const fetchError = (cause?: Error): Error => {
+    const error = new TypeError('fetch failed');
+    if (cause !== undefined) (error as { cause?: Error }).cause = cause;
+    return error;
+  };
+
+  it('returns undefined when the availability endpoint answers non-ok', async () => {
+    const result = await findArchivedSnapshot(
+      'https://x.test',
+      async () => new Response('busy', { status: 503 }),
+    );
+    expect(result).toBeUndefined();
+  });
+
+  it('returns undefined on a non-JSON availability body', async () => {
+    const result = await findArchivedSnapshot(
+      'https://x.test',
+      async () =>
+        new Response('garbage', {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+    expect(result).toBeUndefined();
+  });
+
+  it('returns undefined when the availability request itself fails', async () => {
+    const result = await findArchivedSnapshot('https://x.test', async () => {
+      throw fetchError(new Error('ENOTFOUND lookup x.test'));
+    });
+    expect(result).toBeUndefined();
   });
 });
