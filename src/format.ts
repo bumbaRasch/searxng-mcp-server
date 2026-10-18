@@ -23,12 +23,20 @@ import {
   MAX_URLS_PER_INFOBOX,
   type FetchResult,
   type ListEnginesResponse,
+  type SearchAndFetchResponse,
   type SearchBatchResponse,
   type SearchResponse,
 } from './schemas.js';
 
 /** Compact mode keeps the snippet to roughly one line (D6). */
 const COMPACT_SNIPPET_CHARS = 160;
+
+/** The URL line with its citation ref when one was minted (Stage 1). */
+function resultUrlLine(result: { url: string; ref?: number | undefined }): string {
+  return result.ref === undefined
+    ? sanitizeMeta(result.url)
+    : `[ref:${result.ref}] ${sanitizeMeta(result.url)}`;
+}
 
 export { sanitizeMeta, sanitizeUntrusted };
 
@@ -69,8 +77,12 @@ export function sanitizeToolError(message: string): string {
 }
 
 /** Compact per-result rendering: title (in the heading) + URL + capped snippet (D6). */
-function compactResultLines(result: { url: string; content?: string }): string[] {
-  const lines: string[] = [sanitizeMeta(result.url)];
+function compactResultLines(result: {
+  url: string;
+  ref?: number | undefined;
+  content?: string | undefined;
+}): string[] {
+  const lines: string[] = [resultUrlLine(result)];
   if (result.content) lines.push('', truncateText(result.content, COMPACT_SNIPPET_CHARS));
   return lines;
 }
@@ -95,6 +107,12 @@ export function formatSearchBatchResults(
 
 /** Wrapped body shared by the single and batch renderers (detail affects markdown only). */
 function renderSearchBody(response: SearchResponse, detail?: DetailLevel): string {
+  return wrapUntrusted(searchBodyLines(response, detail).join('\n'));
+}
+
+/** Unwrapped search body: answers, corrections, infoboxes, results with refs,
+ * suggestions. Callers wrap it together with any additional sections. */
+function searchBodyLines(response: SearchResponse, detail?: DetailLevel): string[] {
   const body: string[] = [];
 
   if (response.answers.length > 0) {
@@ -143,6 +161,22 @@ function renderSearchBody(response: SearchResponse, detail?: DetailLevel): strin
     body.push('', `Did you mean: ${response.suggestions.map(sanitizeMeta).join(', ')}`);
   }
 
+  return body;
+}
+
+/** search_and_fetch (Stage 1): the search envelope plus the fetched pages,
+ * all inside one untrusted wrapper so page content cannot break out. */
+export function formatSearchAndFetch(response: SearchAndFetchResponse): string {
+  const body = searchBodyLines(response, undefined);
+  for (const page of response.pages) {
+    body.push('', `## Page [ref:${page.ref}] ${sanitizeMeta(page.title ?? page.url)}`);
+    if (page.error !== undefined) {
+      body.push('', `Not fetched — ${page.error}`);
+      continue;
+    }
+    if (page.finalUrl !== undefined) body.push('', `Source: ${sanitizeMeta(page.finalUrl)}`);
+    body.push('', page.content ?? '');
+  }
   return wrapUntrusted(body.join('\n'));
 }
 

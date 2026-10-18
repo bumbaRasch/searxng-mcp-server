@@ -13,6 +13,7 @@ import {
   formatCategoryResults,
   formatFetchedPage,
   formatListEngines,
+  formatSearchAndFetch,
   formatSearchBatchResults,
   formatSearchResults,
   sanitizeMeta,
@@ -21,6 +22,7 @@ import {
 } from './format.js';
 import type { FetchLike } from './http.js';
 import { TOOL_ICONS } from './icon.js';
+import { sharedRefs, type RefRegistry } from './refs.js';
 import type { LookupAll } from './ssrf.js';
 import { categoryDefinitions } from './categories/index.js';
 import { categoryInputSchema } from './categories/shared.js';
@@ -34,6 +36,8 @@ import {
   fetchOutput,
   listEnginesInput,
   listEnginesOutput,
+  searchAndFetchInput,
+  searchAndFetchOutput,
   searchInput,
   searchToolOutput,
   toCategorySearchParams,
@@ -41,8 +45,11 @@ import {
   type CategoryToolInput,
   type FetchInput,
   type FetchResult,
+  type FetchedPage,
   type ListEnginesInput,
   type ListEnginesResponse,
+  type SearchAndFetchInput,
+  type SearchAndFetchResponse,
   type SearchBatchResponse,
   type SearchInput,
   type SearchResponse,
@@ -61,6 +68,8 @@ export interface ToolDeps {
   lookup?: LookupAll;
   /** Opt-in D9 response cache for instance-bound GETs; config-driven via createServer. */
   cache?: TtlCache<unknown> | undefined;
+  /** Citation ref session; registerTools defaults it to the process-wide sharedRefs. */
+  refs?: RefRegistry | undefined;
 }
 
 const UNTRUSTED_SUFFIX =
@@ -100,7 +109,7 @@ export const handleSearch = createCategoryHandler<
 >(
   'Search failed',
   (config, args, deps) => {
-    const opts = { fetchImpl: deps.fetchImpl, cache: deps.cache };
+    const opts = { fetchImpl: deps.fetchImpl, cache: deps.cache, refs: deps.refs };
     return args.queries !== undefined
       ? searchBatch(config, args.queries, toSearchParams(args), opts)
       : search(config, toSearchParams(args), opts);
@@ -111,13 +120,36 @@ export const handleSearch = createCategoryHandler<
       : formatSearchResults(response, args.detail),
 );
 
+/** `fetch_content` accepts ref:N in place of a URL (Stage 1 citations). */
+const REF_ARG = /^ref:(\d{1,9})$/i;
+
 export async function handleFetch(
   config: Config,
   args: FetchInput,
   deps: ToolDeps = {},
 ): Promise<ToolResult<FetchResult>> {
   try {
-    const result = await fetchContent(config, args.url, {
+    let url = args.url;
+    const refMatch = REF_ARG.exec(url.trim());
+    if (refMatch !== null) {
+      const ref = Number(refMatch[1]);
+      const resolved = deps.refs?.resolve(ref);
+      if (resolved === undefined) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: sanitizeToolError(
+                `Unknown ref:${ref}. Refs are session-scoped and may expire; run a fresh search and cite a ref from its results.`,
+              ),
+            },
+          ],
+          isError: true,
+        };
+      }
+      url = resolved;
+    }
+    const result = await fetchContent(config, url, {
       maxChars: args.max_chars,
       offset: args.offset,
       outline: args.outline,
@@ -199,15 +231,72 @@ export const handleNewsSearch = categoryToolHandler(newsCategory);
 export const handleVideoSearch = categoryToolHandler(videoCategory);
 export const handleMusicSearch = categoryToolHandler(musicCategory);
 
+/** Fetch the top delivered results' pages concurrently; a failure degrades to
+ * an error entry instead of failing the call (D15 replica-error pattern). */
+async function fetchTopPages(
+  config: Config,
+  results: SearchResponse['results'],
+  fetchTop: number,
+  maxChars: number | undefined,
+  deps: ToolDeps,
+): Promise<FetchedPage[]> {
+  return Promise.all(
+    results.slice(0, fetchTop).map(async (result): Promise<FetchedPage> => {
+      const ref = result.ref ?? sharedRefs.assign(result.url);
+      try {
+        const page = await fetchContent(config, result.url, {
+          maxChars,
+          fetchImpl: deps.fetchImpl,
+          lookup: deps.lookup,
+        });
+        const entry: FetchedPage = {
+          ref,
+          url: result.url,
+          finalUrl: page.finalUrl,
+          content: page.content,
+          truncated: page.truncated,
+        };
+        if (page.title !== undefined) entry.title = page.title;
+        return entry;
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        return { ref, url: result.url, error: detail };
+      }
+    }),
+  );
+}
+
+export const handleSearchAndFetch = createCategoryHandler<
+  SearchAndFetchInput,
+  SearchAndFetchResponse
+>(
+  'search_and_fetch failed',
+  (config, args, deps) =>
+    search(config, toSearchParams(args), {
+      fetchImpl: deps.fetchImpl,
+      cache: deps.cache,
+      refs: deps.refs ?? sharedRefs,
+    }).then((response) =>
+      fetchTopPages(config, response.results, args.fetch_top, args.max_chars, deps).then(
+        (pages) => ({ ...response, pages }),
+      ),
+    ),
+  formatSearchAndFetch,
+);
+
 /** Registration order: registry categories first, then the bespoke tools. */
 export const TOOL_NAMES = [
   ...categoryDefinitions.map((definition) => definition.tool.name),
   'fetch_content',
+  'search_and_fetch',
   'autocomplete',
   'list_engines',
 ] as const;
 
 export function registerTools(server: McpServer, config: Config, deps: ToolDeps = {}): void {
+  // The ref session is process-scope: HTTP serving is stateless per request,
+  // so the default must outlive a single server instance.
+  const effectiveDeps: ToolDeps = { refs: sharedRefs, ...deps };
   for (const entry of categoryDefinitions) {
     if (entry.tool.name === 'search') {
       // Web search keeps its bespoke slice: user-chosen categories plus the
@@ -223,7 +312,7 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
           annotations: TOOL_ANNOTATIONS,
           icons: TOOL_ICONS,
         },
-        (args) => handleSearch(config, args, deps),
+        (args) => handleSearch(config, args, effectiveDeps),
       );
       continue;
     }
@@ -240,7 +329,7 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
         annotations: TOOL_ANNOTATIONS,
         icons: TOOL_ICONS,
       },
-      (args: CategoryToolInput) => handler(config, args, deps),
+      (args: CategoryToolInput) => handler(config, args, effectiveDeps),
     );
   }
 
@@ -249,14 +338,29 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
     {
       title: 'Fetch page content',
       description: withUntrustedSuffix(
-        'Fetch a public web page and return its main content as clean Markdown. Use it to read pages found via search results. outline=true also returns headings ([{text, offset, level}]: markdown #-lines, or [Page N] markers for PDFs) whose offsets index the scanned content — the full document, or just the section when section is also given. section=<exact heading, case-insensitive> returns that heading through the next same-or-higher-level heading; offset/max_chars then apply inside it and nextOffset indexes the section. A section that matches nothing is an error, so list headings with outline=true first.',
+        'Fetch a public web page and return its main content as clean Markdown. Use it to read pages found via search results. url may be an absolute http/https URL or ref:N to cite a source from a previous search result by its stable ref (each search result carries one; refs are session-scoped). outline=true also returns headings ([{text, offset, level}]: markdown #-lines, or [Page N] markers for PDFs) whose offsets index the scanned content — the full document, or just the section when section is also given. section=<exact heading, case-insensitive> returns that heading through the next same-or-higher-level heading; offset/max_chars then apply inside it and nextOffset indexes the section. A section that matches nothing is an error, so list headings with outline=true first.',
       ),
       inputSchema: fetchInput,
       outputSchema: fetchOutput,
       annotations: TOOL_ANNOTATIONS,
       icons: TOOL_ICONS,
     },
-    (args) => handleFetch(config, args, deps),
+    (args) => handleFetch(config, args, effectiveDeps),
+  );
+
+  server.registerTool(
+    'search_and_fetch',
+    {
+      title: 'Search and fetch (SearXNG)',
+      description: withUntrustedSuffix(
+        'Search the web through the configured SearXNG instance and immediately fetch the full content of the top results in one call, cutting round trips. Returns the search envelope (results carry stable ref tokens) plus pages[] with the fetched Markdown of the top fetch_top results; a page that fails to fetch is reported as an error entry instead of failing the call. Use it when snippets alone are not enough; use search alone when they are.',
+      ),
+      inputSchema: searchAndFetchInput,
+      outputSchema: searchAndFetchOutput,
+      annotations: TOOL_ANNOTATIONS,
+      icons: TOOL_ICONS,
+    },
+    (args) => handleSearchAndFetch(config, args, effectiveDeps),
   );
 
   server.registerTool(
@@ -271,7 +375,7 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
       annotations: TOOL_ANNOTATIONS,
       icons: TOOL_ICONS,
     },
-    (args) => handleAutocomplete(config, args, deps),
+    (args) => handleAutocomplete(config, args, effectiveDeps),
   );
 
   server.registerTool(
@@ -286,6 +390,6 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
       annotations: TOOL_ANNOTATIONS,
       icons: TOOL_ICONS,
     },
-    (args) => handleListEngines(config, args, deps),
+    (args) => handleListEngines(config, args, effectiveDeps),
   );
 }

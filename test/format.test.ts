@@ -5,6 +5,7 @@ import {
   formatListEngines,
   formatMusicResults,
   formatNewsResults,
+  formatSearchAndFetch,
   formatSearchBatchResults,
   formatSearchResults,
   formatVideoResults,
@@ -17,7 +18,11 @@ import type {
   NewsSearchResponse,
   VideoSearchResponse,
 } from '../src/categories/schemas.js';
-import type { SearchBatchResponse, SearchResponse } from '../src/schemas.js';
+import type {
+  SearchAndFetchResponse,
+  SearchBatchResponse,
+  SearchResponse,
+} from '../src/schemas.js';
 
 describe('formatSearchResults', () => {
   it('renders numbered results with metadata', () => {
@@ -642,5 +647,52 @@ describe('new optional media fields in the meta line', () => {
     });
     expect(md).toContain('views: 12345');
     expect(md).toContain('embed: https://embed.test/1');
+  });
+});
+
+describe('citation refs and formatSearchAndFetch', () => {
+  it('renders [ref:N] next to result URLs when refs are present', () => {
+    const md = formatSearchResults({
+      query: 'q',
+      results: [{ title: 'T', url: 'https://r.test/1', content: 'c', ref: 7 }],
+      answers: [],
+      corrections: [],
+      infoboxes: [],
+      suggestions: [],
+      unresponsiveEngines: [],
+    });
+    expect(md).toContain('[ref:7] https://r.test/1');
+  });
+
+  it('renders search_and_fetch pages inside the untrusted wrapper', () => {
+    const response: SearchAndFetchResponse = {
+      query: 'q',
+      results: [
+        { title: 'T', url: 'https://r.test/1', content: 'c', ref: 7 },
+        { title: 'U', url: 'https://r.test/2', content: 'c', ref: 8 },
+      ],
+      answers: [],
+      corrections: [],
+      infoboxes: [],
+      suggestions: [],
+      unresponsiveEngines: [],
+      pages: [
+        {
+          ref: 7,
+          url: 'https://r.test/1',
+          finalUrl: 'https://r.test/1/',
+          title: 'Doc',
+          content: 'hello world',
+          truncated: false,
+        },
+        { ref: 8, url: 'https://r.test/2', error: 'HTTP 404' },
+      ],
+    };
+    const md = formatSearchAndFetch(response);
+    expect(md).toContain('[ref:7] https://r.test/1');
+    expect(md).toContain('Page [ref:7] Doc');
+    expect(md).toContain('hello world');
+    expect(md).toContain('Not fetched — HTTP 404');
+    expect(md).toContain('UNTRUSTED_WEB_CONTENT');
   });
 });

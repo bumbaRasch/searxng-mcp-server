@@ -203,6 +203,7 @@ describe('every tool answers over transport', () => {
   const args: Record<string, Record<string, unknown>> = {
     search: { query: 'q' },
     fetch_content: { url: 'https://example.test/doc' },
+    search_and_fetch: { query: 'q', fetch_top: 1 },
     image_search: { query: 'q' },
     news_search: { query: 'q' },
     video_search: { query: 'q' },

@@ -86,7 +86,13 @@ export type SearchBatchResponse = z.infer<typeof searchBatchOutput>;
 export const searchToolOutput = z.union([searchOutput, searchBatchOutput]);
 
 export const fetchInput = z.object({
-  url: z.string().min(1).max(2048).describe('The absolute http/https URL to fetch.'),
+  url: z
+    .string()
+    .min(1)
+    .max(2048)
+    .describe(
+      'The absolute http/https URL to fetch, or ref:N to fetch the source registered as ref N on a previous search result (session-scoped; see the ref field on search results).',
+    ),
   max_chars: z
     .number()
     .int()
@@ -147,6 +153,50 @@ export const fetchOutput = z.object({
     .optional(),
 });
 export type FetchResult = z.infer<typeof fetchOutput>;
+
+/** search_and_fetch: one query, the search envelope, and the top results'
+ * full content fetched in the same call (Stage 1). */
+export const searchAndFetchInput = z.object({
+  query: queryArg,
+  categories: z
+    .array(z.string().min(1))
+    .optional()
+    .describe('SearXNG categories, e.g. ["general"], ["news"]. Unknown values are ignored.'),
+  engines: enginesArg,
+  language: languageArg,
+  time_range: timeRangeArg,
+  pageno: pagenoArg,
+  safesearch: safesearchArg,
+  max_results: maxResultsArg,
+  min_score: minScoreArg,
+  fetch_top: z
+    .number()
+    .int()
+    .min(1)
+    .max(5)
+    .default(3)
+    .describe('Fetch the full content of the top N results (1-5, default 3).'),
+  max_chars: fetchInput.shape.max_chars,
+});
+export type SearchAndFetchInput = z.infer<typeof searchAndFetchInput>;
+
+export const fetchedPageSchema = z.object({
+  ref: z.number().int().positive(),
+  url: z.string(),
+  finalUrl: z.string().optional(),
+  title: z.string().optional(),
+  content: z.string().optional(),
+  truncated: z.boolean().optional(),
+  // Present instead of content when the page could not be fetched.
+  error: z.string().optional(),
+});
+export type FetchedPage = z.infer<typeof fetchedPageSchema>;
+
+export const searchAndFetchOutput = z.object({
+  ...searchOutput.shape,
+  pages: z.array(fetchedPageSchema),
+});
+export type SearchAndFetchResponse = z.infer<typeof searchAndFetchOutput>;
 
 /** Internal search parameters: tool args (snake_case) mapped to camelCase. */
 type TimeRange = NonNullable<z.infer<typeof timeRangeArg>>;

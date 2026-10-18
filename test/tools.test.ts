@@ -2,12 +2,15 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { describe, expect, it } from 'vitest';
 import { autocompleteInput, autocompleteOutput } from '../src/autocompleter.js';
 import { TtlCache } from '../src/cache.js';
+import { RefRegistry } from '../src/refs.js';
 import type { FetchLike } from '../src/http.js';
 import type { LookupAll } from '../src/ssrf.js';
 import {
   fetchInput,
   fetchOutput,
   listEnginesOutput,
+  searchAndFetchInput,
+  searchAndFetchOutput,
   searchInput,
   searchOutput,
   searchToolOutput,
@@ -30,6 +33,7 @@ import {
   handleMusicSearch,
   handleNewsSearch,
   handleSearch,
+  handleSearchAndFetch,
   handleVideoSearch,
   registerTools,
   renderListEngines,
@@ -108,6 +112,15 @@ const detailedFetch: FetchLike = async () =>
     infoboxes: [],
     suggestions: [],
     unresponsiveEngines: [],
+  });
+
+const twoResultFetch: FetchLike = async () =>
+  jsonResponse({
+    query: 'q',
+    results: [
+      { title: 'R1', url: 'https://r.test/1', content: 'c' },
+      { title: 'R2', url: 'https://r.test/2', content: 'c' },
+    ],
   });
 
 const imageJsonFetch: FetchLike = async () =>
@@ -728,5 +741,104 @@ describe('handleAutocomplete', () => {
     const tool = registered.get('autocomplete');
     expect(tool?.title).toBe('Query suggestions (SearXNG)');
     expect(tool?.description).toMatch(/language configured on the instance/);
+  });
+});
+
+describe('citation refs', () => {
+  it('search mints stable refs into structured and text output', async () => {
+    const refs = new RefRegistry();
+    const result = await handleSearch(config, searchInput.parse({ query: 'q' }), {
+      fetchImpl: twoResultFetch,
+      refs,
+    });
+    const structured = searchOutput.parse(result.structuredContent);
+    const first = structured.results[0];
+    const second = structured.results[1];
+    expect(first?.ref).toBeDefined();
+    expect(second?.ref).not.toBe(first?.ref);
+    expect(result.content[0]?.text).toContain(`[ref:${first?.ref}] https://r.test/1`);
+    // Stability: the same URL keeps its ref across calls.
+    const again = await handleSearch(config, searchInput.parse({ query: 'q' }), {
+      fetchImpl: twoResultFetch,
+      refs,
+    });
+    expect(searchOutput.parse(again.structuredContent).results[0]?.ref).toBe(first?.ref);
+  });
+
+  it('search without a registry stays ref-free (unchanged legacy shape)', async () => {
+    const result = await handleSearch(config, searchInput.parse({ query: 'q' }), {
+      fetchImpl: echoFetch,
+    });
+    const structured = searchOutput.parse(result.structuredContent);
+    for (const item of structured.results) expect(item.ref).toBeUndefined();
+  });
+
+  it('handleFetch resolves ref:N to the registered URL', async () => {
+    const refs = new RefRegistry();
+    const ref = refs.assign('https://r.test/1');
+    const result = await handleFetch(config, fetchInput.parse({ url: `ref:${ref}` }), {
+      fetchImpl: docFetch,
+      refs,
+    });
+    expect(result.isError).toBeUndefined();
+    const structured = fetchOutput.parse(result.structuredContent);
+    expect(structured.url).toBe('https://r.test/1');
+  });
+
+  it('handleFetch rejects an unknown ref with a searchable hint', async () => {
+    const result = await handleFetch(config, fetchInput.parse({ url: 'ref:424242' }), {
+      refs: new RefRegistry(),
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/Unknown ref:424242/);
+  });
+
+  it('search_and_fetch returns results plus fetched pages aligned by ref', async () => {
+    const refs = new RefRegistry();
+    const result = await handleSearchAndFetch(
+      config,
+      searchAndFetchInput.parse({ query: 'q', fetch_top: 1 }),
+      {
+        fetchImpl: asFetchLike(async (url: string) =>
+          url.includes('/search?')
+            ? twoResultFetch(url)
+            : new Response(HTML_PAGE, { status: 200, headers: { 'content-type': 'text/html' } }),
+        ),
+        refs,
+      },
+    );
+    expect(result.isError).toBeUndefined();
+    const structured = searchAndFetchOutput.parse(result.structuredContent);
+    expect(structured.results).toHaveLength(2);
+    expect(structured.pages).toHaveLength(1); // fetch_top
+    expect(structured.pages[0]?.ref).toBe(structured.results[0]?.ref);
+    expect(structured.pages[0]?.title).toBe('Doc');
+    expect(structured.pages[0]?.content).toContain('word');
+    expect(structured.pages[0]?.truncated).toBe(false);
+    expect(result.content[0]?.text).toContain(`Page [ref:${structured.pages[0]?.ref}] Doc`);
+  });
+
+  it('search_and_fetch degrades failed page fetches to error entries', async () => {
+    const refs = new RefRegistry();
+    const result = await handleSearchAndFetch(
+      config,
+      searchAndFetchInput.parse({ query: 'q', fetch_top: 2 }),
+      {
+        fetchImpl: asFetchLike(async (url: string) => {
+          if (url.includes('/search?')) return twoResultFetch(url);
+          if (url.includes('r.test/1')) throw new Error('connection reset');
+          return new Response(HTML_PAGE, { status: 200, headers: { 'content-type': 'text/html' } });
+        }),
+        refs,
+      },
+    );
+    expect(result.isError).toBeUndefined();
+    const structured = searchAndFetchOutput.parse(result.structuredContent);
+    expect(structured.pages).toHaveLength(2);
+    expect(structured.pages[0]?.error).toMatch(/connection reset/);
+    expect(structured.pages[0]?.content).toBeUndefined();
+    expect(structured.pages[1]?.title).toBe('Doc');
+    expect(structured.pages[1]?.content).toContain('word');
+    expect(result.content[0]?.text).toMatch(/Not fetched — connection reset/);
   });
 });
