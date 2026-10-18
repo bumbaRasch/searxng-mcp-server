@@ -1,16 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import * as z from 'zod/v4';
+import { listEnginesInput, listEnginesOutput } from '../src/schemas/list-engines.js';
 import {
   fetchedPageSchema,
-  listEnginesInput,
-  listEnginesOutput,
   searchAndFetchInput,
   searchAndFetchOutput,
-  searchInput,
-  searchOutput,
-  searchToolOutput,
-  toSearchParams,
-} from '../src/schemas.js';
+} from '../src/schemas/search-and-fetch.js';
+import { searchInput, searchOutput, searchToolOutput } from '../src/schemas/search.js';
+import { toSearchParams } from '../src/schemas/mappers.js';
 import {
   imageSearchInput,
   imageSearchOutput,

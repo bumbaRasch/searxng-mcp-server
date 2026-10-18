@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { MAX_HTML_RESULTS, parseSearchResultsHtml } from '../src/html-results.js';
 import { mapSearchResponse } from '../src/searxng.js';
-import { searchOutput } from '../src/schemas.js';
+import { searchOutput } from '../src/schemas/search.js';
 
 const FIXTURE = readFileSync(
   new URL('./fixtures/searxng-result-page.html', import.meta.url),

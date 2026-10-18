@@ -18,11 +18,8 @@ import type {
   NewsSearchResponse,
   VideoSearchResponse,
 } from '../src/categories/schemas.js';
-import type {
-  SearchAndFetchResponse,
-  SearchBatchResponse,
-  SearchResponse,
-} from '../src/schemas.js';
+import type { SearchAndFetchResponse } from '../src/schemas/search-and-fetch.js';
+import type { SearchBatchResponse, SearchResponse } from '../src/schemas/search.js';
 
 describe('formatSearchResults', () => {
   it('renders numbered results with metadata', () => {

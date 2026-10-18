@@ -1,5 +1,4 @@
 import type { McpServer } from '@modelcontextprotocol/server';
-import * as z from 'zod/v4';
 import {
   autocomplete,
   autocompleteInput,
@@ -34,9 +33,11 @@ import { runWithTraceContext } from './otel.js';
 import { sharedRefs, type RefRegistry } from './refs.js';
 import { GALLERY_TOOL_META } from './apps.js';
 import {
+  createTaskResult,
   declaresTasksCapability,
+  registerTaskHandlers,
   sharedTaskStore,
-  type TaskRecord,
+  type CreateTaskWireResult,
   type TaskStore,
 } from './tasks.js';
 import type { LookupAll } from './ssrf.js';
@@ -47,39 +48,40 @@ import { imageCategory } from './categories/images.js';
 import { musicCategory } from './categories/music.js';
 import { newsCategory } from './categories/news.js';
 import { videoCategory } from './categories/videos.js';
+import { crawlInput, crawlOutput, type CrawlInput, type CrawlResponse } from './schemas/crawl.js';
+import { deepSearchInput, type DeepSearchInput } from './schemas/deep-search.js';
 import {
-  crawlInput,
-  crawlOutput,
-  deepSearchInput,
   doctorInput,
   doctorOutput,
-  fetchInput,
-  fetchOutput,
-  listEnginesInput,
-  listEnginesOutput,
-  searchAndFetchInput,
-  searchAndFetchOutput,
-  searchInput,
-  searchToolOutput,
-  toCategorySearchParams,
-  toSearchParams,
-  type CategoryToolInput,
-  type CrawlInput,
-  type CrawlResponse,
-  type DeepSearchInput,
   type DoctorInput,
   type DoctorResponse,
-  type FetchInput,
-  type FetchResult,
-  type FetchedPage,
+} from './schemas/doctor.js';
+import { fetchInput, fetchOutput, type FetchInput, type FetchResult } from './schemas/fetch.js';
+import {
+  listEnginesInput,
+  listEnginesOutput,
   type ListEnginesInput,
   type ListEnginesResponse,
-  type SearchAndFetchInput,
-  type SearchAndFetchResponse,
+} from './schemas/list-engines.js';
+import {
+  searchInput,
+  searchToolOutput,
   type SearchBatchResponse,
   type SearchInput,
   type SearchResponse,
-} from './schemas.js';
+} from './schemas/search.js';
+import {
+  searchAndFetchInput,
+  searchAndFetchOutput,
+  type FetchedPage,
+  type SearchAndFetchInput,
+  type SearchAndFetchResponse,
+} from './schemas/search-and-fetch.js';
+import {
+  toCategorySearchParams,
+  toSearchParams,
+  type CategoryToolInput,
+} from './schemas/mappers.js';
 import { listEngines, runCategorySearch, SearxngError, search, searchBatch } from './searxng.js';
 
 type ToolResult<T = unknown> = {
@@ -299,35 +301,6 @@ export async function handleDeepSearch(
     },
   );
   return createTaskResult(record);
-}
-
-/** Wire shape of a CreateTaskResult (resultType: "task"). Extra fields ride
- * through the SDK's CallToolResult passthrough (verified against SDK v2.3.1). */
-export interface CreateTaskWireResult {
-  content: { type: 'text'; text: string }[];
-  resultType: 'task';
-  taskId: string;
-  status: TaskRecord['status'];
-  statusMessage?: string | undefined;
-  createdAt: string;
-  lastUpdatedAt: string;
-  ttlMs: number | null;
-  pollIntervalMs?: number | undefined;
-}
-
-/** CreateTaskResult (resultType: "task") seeded from the store record. */
-export function createTaskResult(record: TaskRecord): CreateTaskWireResult {
-  return {
-    content: [],
-    resultType: 'task',
-    taskId: record.taskId,
-    status: record.status,
-    statusMessage: record.statusMessage,
-    createdAt: record.createdAt,
-    lastUpdatedAt: record.lastUpdatedAt,
-    ttlMs: record.ttlMs,
-    pollIntervalMs: record.pollIntervalMs,
-  };
 }
 
 /** D15: the primary instance's listing plus the aggregation summary; the full
@@ -649,69 +622,4 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
   );
 
   registerTaskHandlers(server, effectiveDeps);
-}
-
-/** Spec-blessed JSON-RPC error: the SDK honors a numeric `code` (plus
- * `data`) on the thrown value; a bare Error answers -32603. */
-const specError = (code: number, message: string, data?: unknown): Error =>
-  Object.assign(new Error(message), { code, ...(data !== undefined ? { data } : {}) });
-
-/** Per-request capability gate (spec: servers MUST answer -32021 to a
- * tasks/get, tasks/update or tasks/cancel whose _meta envelope does not
- * declare io.modelcontextprotocol/tasks). */
-const requireTasksCapability = (ctx: { mcpReq?: { envelope?: unknown } } | undefined): void => {
-  if (declaresTasksCapability(ctx?.mcpReq?.envelope)) return;
-  throw specError(-32021, 'Missing io.modelcontextprotocol/tasks client capability', {
-    requiredCapabilities: { extensions: { 'io.modelcontextprotocol/tasks': {} } },
-  });
-};
-
-const unknownTask = (taskId: string): Error => specError(-32602, `Unknown task: ${taskId}`);
-
-/** Serving seam for the task family (Stage 4): the SDK keeps only
- * tasks/get and tasks/cancel on the 2026-07-28 wire, served through
- * explicit-schema custom handlers. Unknown task ids error; there is no
- * tasks/list by spec. */
-function registerTaskHandlers(server: McpServer, deps: ToolDeps): void {
-  const store = deps.tasks ?? sharedTaskStore;
-  const taskParams = z.object({ taskId: z.string() });
-  const taskResult = z.object({ resultType: z.literal('complete') }).passthrough();
-  type TaskHandlerResult = z.infer<typeof taskResult>;
-
-  server.server.setRequestHandler(
-    'tasks/get',
-    { params: taskParams, result: taskResult },
-    (params, ctx) => {
-      requireTasksCapability(ctx);
-      const record = store.get(params.taskId);
-      if (record === undefined) {
-        throw unknownTask(params.taskId);
-      }
-      const task: TaskHandlerResult = {
-        resultType: 'complete',
-        taskId: record.taskId,
-        status: record.status,
-        createdAt: record.createdAt,
-        lastUpdatedAt: record.lastUpdatedAt,
-        ttlMs: record.ttlMs,
-      };
-      if (record.statusMessage !== undefined) task.statusMessage = record.statusMessage;
-      if (record.pollIntervalMs !== undefined) task.pollIntervalMs = record.pollIntervalMs;
-      if (record.result !== undefined) task.result = record.result;
-      if (record.error !== undefined) task.error = record.error;
-      return task;
-    },
-  );
-
-  server.server.setRequestHandler(
-    'tasks/cancel',
-    { params: taskParams, result: taskResult },
-    (params, ctx) => {
-      requireTasksCapability(ctx);
-      if (!store.cancel(params.taskId)) {
-        throw unknownTask(params.taskId);
-      }
-      return { resultType: 'complete' as const };
-    },
-  );
 }

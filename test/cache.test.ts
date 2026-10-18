@@ -5,7 +5,8 @@ import type { Config } from '../src/config.js';
 import type { FetchLike } from '../src/http.js';
 import { createServer } from '../src/server.js';
 import { search } from '../src/searxng.js';
-import { fetchInput, searchInput } from '../src/schemas.js';
+import { fetchInput } from '../src/schemas/fetch.js';
+import { searchInput } from '../src/schemas/search.js';
 import { handleFetch, handleSearch } from '../src/tools.js';
 import { asFetchLike, HTML_PAGE, jsonResponse, makeConfig } from './helpers.js';
 

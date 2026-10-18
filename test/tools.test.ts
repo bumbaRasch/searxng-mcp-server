@@ -6,20 +6,13 @@ import { RefRegistry } from '../src/refs.js';
 import { TaskStore } from '../src/tasks.js';
 import type { FetchLike } from '../src/http.js';
 import type { LookupAll } from '../src/ssrf.js';
-import {
-  crawlInput,
-  deepSearchInput,
-  doctorInput,
-  doctorOutput,
-  fetchInput,
-  fetchOutput,
-  listEnginesOutput,
-  searchAndFetchInput,
-  searchAndFetchOutput,
-  searchInput,
-  searchOutput,
-  searchToolOutput,
-} from '../src/schemas.js';
+import { crawlInput } from '../src/schemas/crawl.js';
+import { deepSearchInput } from '../src/schemas/deep-search.js';
+import { doctorInput, doctorOutput } from '../src/schemas/doctor.js';
+import { fetchInput, fetchOutput } from '../src/schemas/fetch.js';
+import { listEnginesOutput } from '../src/schemas/list-engines.js';
+import { searchAndFetchInput, searchAndFetchOutput } from '../src/schemas/search-and-fetch.js';
+import { searchInput, searchOutput, searchToolOutput } from '../src/schemas/search.js';
 import { formatCrawl } from '../src/format.js';
 import {
   imageSearchInput,

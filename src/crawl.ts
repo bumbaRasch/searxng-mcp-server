@@ -14,7 +14,7 @@ import { FetchError, fetchContent } from './fetch.js';
 import type { FetchLike } from './http.js';
 import type { LookupAll } from './ssrf.js';
 import type { RefRegistry } from './refs.js';
-import type { CrawlResponse } from './schemas.js';
+import type { CrawlResponse } from './schemas/crawl.js';
 import { truncateText } from './categories/shared.js';
 
 const SNIPPET_CHARS = 200;

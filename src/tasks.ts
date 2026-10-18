@@ -7,6 +7,8 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import type { McpServer } from '@modelcontextprotocol/server';
+import * as z from 'zod/v4';
 import { isRecord, sanitizeMeta } from './categories/shared.js';
 
 export type TaskStatus = 'working' | 'input_required' | 'completed' | 'cancelled' | 'failed';
@@ -171,4 +173,101 @@ export function declaresTasksCapability(envelope: unknown): boolean {
   const extensions = capabilities.extensions;
   if (!isRecord(extensions)) return false;
   return isRecord(extensions['io.modelcontextprotocol/tasks']);
+}
+
+/** Wire shape of a CreateTaskResult (resultType: "task"). Extra fields ride
+ * through the SDK's CallToolResult passthrough (verified against SDK v2.3.1). */
+export interface CreateTaskWireResult {
+  content: { type: 'text'; text: string }[];
+  resultType: 'task';
+  taskId: string;
+  status: TaskRecord['status'];
+  statusMessage?: string | undefined;
+  createdAt: string;
+  lastUpdatedAt: string;
+  ttlMs: number | null;
+  pollIntervalMs?: number | undefined;
+}
+
+/** CreateTaskResult (resultType: "task") seeded from the store record. */
+export function createTaskResult(record: TaskRecord): CreateTaskWireResult {
+  return {
+    content: [],
+    resultType: 'task',
+    taskId: record.taskId,
+    status: record.status,
+    statusMessage: record.statusMessage,
+    createdAt: record.createdAt,
+    lastUpdatedAt: record.lastUpdatedAt,
+    ttlMs: record.ttlMs,
+    pollIntervalMs: record.pollIntervalMs,
+  };
+}
+
+/** Spec-blessed JSON-RPC error: the SDK honors a numeric `code` (plus
+ * `data`) on the thrown value; a bare Error answers -32603. */
+const specError = (code: number, message: string, data?: unknown): Error =>
+  Object.assign(new Error(message), { code, ...(data !== undefined ? { data } : {}) });
+
+/** Per-request capability gate (spec: servers MUST answer -32021 to a
+ * tasks/get, tasks/update or tasks/cancel whose _meta envelope does not
+ * declare io.modelcontextprotocol/tasks). */
+const requireTasksCapability = (ctx: { mcpReq?: { envelope?: unknown } } | undefined): void => {
+  if (declaresTasksCapability(ctx?.mcpReq?.envelope)) return;
+  throw specError(-32021, 'Missing io.modelcontextprotocol/tasks client capability', {
+    requiredCapabilities: { extensions: { 'io.modelcontextprotocol/tasks': {} } },
+  });
+};
+
+const unknownTask = (taskId: string): Error => specError(-32602, `Unknown task: ${taskId}`);
+
+/** Serving seam for the task family (Stage 4): the SDK keeps only
+ * tasks/get and tasks/cancel on the 2026-07-28 wire, served through
+ * explicit-schema custom handlers. Unknown task ids error; there is no
+ * tasks/list by spec. */
+export function registerTaskHandlers(
+  server: McpServer,
+  deps: { tasks?: TaskStore | undefined } = {},
+): void {
+  const store = deps.tasks ?? sharedTaskStore;
+  const taskParams = z.object({ taskId: z.string() });
+  const taskResult = z.object({ resultType: z.literal('complete') }).passthrough();
+  type TaskHandlerResult = z.infer<typeof taskResult>;
+
+  server.server.setRequestHandler(
+    'tasks/get',
+    { params: taskParams, result: taskResult },
+    (params, ctx) => {
+      requireTasksCapability(ctx);
+      const record = store.get(params.taskId);
+      if (record === undefined) {
+        throw unknownTask(params.taskId);
+      }
+      const task: TaskHandlerResult = {
+        resultType: 'complete',
+        taskId: record.taskId,
+        status: record.status,
+        createdAt: record.createdAt,
+        lastUpdatedAt: record.lastUpdatedAt,
+        ttlMs: record.ttlMs,
+      };
+      if (record.statusMessage !== undefined) task.statusMessage = record.statusMessage;
+      if (record.pollIntervalMs !== undefined) task.pollIntervalMs = record.pollIntervalMs;
+      if (record.result !== undefined) task.result = record.result;
+      if (record.error !== undefined) task.error = record.error;
+      return task;
+    },
+  );
+
+  server.server.setRequestHandler(
+    'tasks/cancel',
+    { params: taskParams, result: taskResult },
+    (params, ctx) => {
+      requireTasksCapability(ctx);
+      if (!store.cancel(params.taskId)) {
+        throw unknownTask(params.taskId);
+      }
+      return { resultType: 'complete' as const };
+    },
+  );
 }
