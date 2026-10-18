@@ -176,3 +176,40 @@ describe('deepSearch', () => {
     expect(result.synthesisNote).toMatch(/Synthesis failed/);
   });
 });
+
+describe('deepSearch failure degradation', () => {
+  it('stops early when a later iteration exhausts the instance (SearxngError)', async () => {
+    const flakyFetch = asFetchLike(async (url: string) => {
+      if (url.includes('/search?')) {
+        const pageno = Number(new URL(url).searchParams.get('pageno') ?? '1');
+        if (pageno > 1) return jsonResponse({}, 500);
+        return jsonResponse(SEARCH_RESULTS);
+      }
+      return new Response(HTML_PAGE, { status: 200, headers: { 'content-type': 'text/html' } });
+    });
+    const dossier = await deepSearch(config, 'rust async', {
+      maxIterations: 2,
+      sourcesPerIteration: 1,
+      maxResults: 10,
+      refs: new RefRegistry(),
+      fetchImpl: flakyFetch,
+    });
+    expect(dossier.iterations).toBe(1);
+  });
+
+  it('records unreadable sources as notes instead of failing', async () => {
+    const halfBrokenFetch = asFetchLike(async (url: string) => {
+      if (url.includes('/search?')) return jsonResponse(SEARCH_RESULTS);
+      throw new Error('connection reset');
+    });
+    const dossier = await deepSearch(config, 'rust async', {
+      maxIterations: 1,
+      sourcesPerIteration: 1,
+      maxResults: 10,
+      refs: new RefRegistry(),
+      fetchImpl: halfBrokenFetch,
+    });
+    expect(dossier.notes).toHaveLength(1);
+    expect(dossier.notes[0]?.excerpt).toMatch(/Unreadable \(connection reset\)/);
+  });
+});

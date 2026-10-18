@@ -1122,3 +1122,52 @@ describe('deep_search and the task family', () => {
     }
   });
 });
+
+describe('deep_search failure surfaces', () => {
+  const TASK_CAPS = {
+    'io.modelcontextprotocol/clientCapabilities': {
+      extensions: { 'io.modelcontextprotocol/tasks': {} },
+    },
+  };
+
+  it('inline run reports a sanitized isError when the instance fails outright', async () => {
+    const result = await handleDeepSearch(
+      config,
+      deepSearchInput.parse({ query: 'rust async', max_iterations: 1 }),
+      {
+        fetchImpl: asFetchLike(async (url: string) => {
+          if (url.includes('/search?')) return jsonResponse({}, 500);
+          throw new Error('unreachable');
+        }),
+      },
+    );
+    const toolResult = result as { isError?: boolean; content: { text: string }[] };
+    expect(toolResult.isError).toBe(true);
+    expect(toolResult.content[0]?.text).toMatch(/Deep search failed/);
+  });
+
+  it('task mode fails the task with a JSON-RPC error when the run throws', async () => {
+    const store = new TaskStore();
+    const result = await handleDeepSearch(
+      config,
+      deepSearchInput.parse({ query: 'rust async', max_iterations: 1, sources_per_iteration: 1 }),
+      {
+        tasks: store,
+        fetchImpl: asFetchLike(async (url: string) => {
+          if (url.includes('/search?')) return jsonResponse({}, 500);
+          throw new Error('unreachable');
+        }),
+      },
+      { mcpReq: { envelope: TASK_CAPS } },
+    );
+    const task = result as { taskId?: string };
+    expect(task.taskId).toBeDefined();
+    let record = store.get(task.taskId ?? '');
+    for (let i = 0; i < 100 && record?.status === 'working'; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      record = store.get(task.taskId ?? '');
+    }
+    expect(record?.status).toBe('failed');
+    expect(record?.error?.code).toBe(-32603);
+  });
+});
