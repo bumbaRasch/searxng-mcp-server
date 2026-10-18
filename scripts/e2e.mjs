@@ -498,14 +498,17 @@ async function main() {
     );
 
     // 4e-tasks. task-augmented deep_search: CreateTaskResult → tasks/get → completed
+    // Conformant client: every tasks/* request declares the extension in its
+    // per-request _meta envelope; the server answers -32021 otherwise.
+    const TASK_CAPS = {
+      'io.modelcontextprotocol/clientCapabilities': {
+        extensions: { 'io.modelcontextprotocol/tasks': {} },
+      },
+    };
     const taskCall = await request(serverProcess, 'tools/call', {
       name: 'deep_search',
       arguments: { query: 'searxng metasearch', max_iterations: 1, sources_per_iteration: 1 },
-      _meta: {
-        'io.modelcontextprotocol/clientCapabilities': {
-          extensions: { 'io.modelcontextprotocol/tasks': {} },
-        },
-      },
+      _meta: TASK_CAPS,
     });
     const taskResult = taskCall.result;
     assert(
@@ -516,7 +519,7 @@ async function main() {
     assert(typeof taskId === 'string' && taskId.length > 0, 'task handle carries a taskId');
     let task;
     for (let i = 0; i < 60; i += 1) {
-      const poll = await request(serverProcess, 'tasks/get', { taskId });
+      const poll = await request(serverProcess, 'tasks/get', { taskId, _meta: TASK_CAPS });
       if (poll.error) fail(`tasks/get errored: ${JSON.stringify(poll.error)}`);
       task = poll.result;
       if (['completed', 'failed', 'cancelled'].includes(task?.status)) break;
@@ -532,8 +535,15 @@ async function main() {
       'completed task carries the dossier result',
     );
 
-    const unknownTask = await request(serverProcess, 'tasks/get', { taskId: 'not-a-task' });
+    const unknownTask = await request(serverProcess, 'tasks/get', {
+      taskId: 'not-a-task',
+      _meta: TASK_CAPS,
+    });
     assert(unknownTask.error !== undefined, 'tasks/get of an unknown id is a JSON-RPC error');
+    assert(
+      unknownTask.error.code === -32602,
+      `unknown taskId answers -32602 (got ${unknownTask.error.code})`,
+    );
 
     // 4e-skills. skills over MCP: resources/list advertises the skill://
     // URIs, resources/read serves the SKILL.md bodies, skills/list and

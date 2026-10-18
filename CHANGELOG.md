@@ -107,6 +107,22 @@ no Sampling, Roots or Logging anywhere in the new surface).
   advertises `ttlMs: 300000, cacheScope: "public"` and every tool keeps its
   untrusted-content suffix and icons.
 
+### Fixed
+
+- Task store keeps its `AbortController`s across TTL expiry, pruning and
+  eviction (cancellation still reaches the worker) and never evicts a working
+  task while finished ones can make room.
+- `tasks/get`/`tasks/cancel` answer `-32602` on an unknown task id and
+  `-32021` to clients without the tasks capability.
+- `skills/list`/`skills/get` serve frontmatter verbatim (the `license` field
+  is preserved) and return `-32602` on an unknown `uri` or invalid `cursor`.
+- `ui/initialize` sends `appCapabilities`.
+- The Wayback fallback no longer triggers on an SSRF-guard refusal (policy
+  refusals are not dead links).
+- `deep_search` synthesis stops when the task is cancelled.
+- `doctor` always reports the limiter when `/config` answered, even when the
+  search probe failed with something other than 429.
+
 ### Security
 
 - Ref sessions, the crawl page store and the task store are process-scope and
@@ -257,7 +273,9 @@ No 0.3.x compatibility shims (pre-1.0 minor, per the release policy):
 - Bundled SearXNG Docker stack (pinned image, loopback-only) and end-to-end verification script.
 - 260 unit tests, CI matrix (Node 22.19/24/26), type-aware linting, coverage.
 
-[Unreleased]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v0.5.2...v1.0.0
+[0.5.2]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v0.3.2...v0.4.0

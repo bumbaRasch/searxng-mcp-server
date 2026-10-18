@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { deepSearch } from '../src/deep-search.js';
+import { describe, expect, it, vi } from 'vitest';
+import { deepSearch, DeepSearchCancelled } from '../src/deep-search.js';
 import { RefRegistry } from '../src/refs.js';
 import { asFetchLike, jsonResponse, makeConfig, HTML_PAGE } from './helpers.js';
 
@@ -117,5 +117,62 @@ describe('deepSearch', () => {
       signal: controller.signal,
     });
     await expect(dossier).rejects.toThrow(/cancelled/i);
+  });
+
+  it('never pings the synthesis endpoint when the signal is already aborted', async () => {
+    const synthesisConfig = makeConfig({
+      synthesisUrl: 'https://synth.test/v1/chat/completions',
+    });
+    const controller = new AbortController();
+    controller.abort();
+    const fetchImpl = vi.fn(
+      siteFetch({ synthesis: { choices: [{ message: { content: 'no' } }] } }),
+    );
+    const dossier = deepSearch(synthesisConfig, 'rust async', {
+      maxIterations: 1,
+      sourcesPerIteration: 1,
+      maxResults: 10,
+      refs: new RefRegistry(),
+      fetchImpl: asFetchLike(fetchImpl),
+      signal: controller.signal,
+    });
+    await expect(dossier).rejects.toThrow(DeepSearchCancelled);
+    expect(fetchImpl.mock.calls).toHaveLength(0);
+  });
+
+  it('propagates task cancellation into the in-flight synthesis request', async () => {
+    const synthesisConfig = makeConfig({
+      synthesisUrl: 'https://synth.test/v1/chat/completions',
+    });
+    const controller = new AbortController();
+    let calls = 0;
+    const fetchImpl = asFetchLike(async (url: string, init?: RequestInit) => {
+      calls += 1;
+      if (url.includes('/search?')) return jsonResponse(SEARCH_RESULTS);
+      if (url.startsWith('https://r.test/')) {
+        return new Response(HTML_PAGE, { status: 200, headers: { 'content-type': 'text/html' } });
+      }
+      // Synthesis endpoint: hold the POST open until its own signal aborts.
+      return new Promise((resolve, reject) => {
+        const signal = init?.signal;
+        const onAbort = () => reject(signal?.reason ?? new Error('aborted'));
+        if (signal?.aborted) onAbort();
+        else signal?.addEventListener('abort', onAbort, { once: true });
+      });
+    });
+    const dossier = deepSearch(synthesisConfig, 'rust async', {
+      maxIterations: 1,
+      sourcesPerIteration: 1,
+      maxResults: 10,
+      refs: new RefRegistry(),
+      fetchImpl,
+      signal: controller.signal,
+    });
+    // Wait until the synthesis POST is in flight (search + page + synthesis).
+    await vi.waitFor(() => expect(calls).toBe(3));
+    controller.abort();
+    const result = await dossier;
+    expect(result.synthesis).toBeUndefined();
+    expect(result.synthesisNote).toMatch(/Synthesis failed/);
   });
 });

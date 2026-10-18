@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { crawlSite, extractMarkdownLinks, PageStore, parseRobots } from '../src/crawl.js';
+import {
+  crawlSite,
+  extractMarkdownLinks,
+  PageStore,
+  parseRobots,
+  type StoredPage,
+} from '../src/crawl.js';
 import { RefRegistry } from '../src/refs.js';
 import { asFetchLike, makeConfig } from './helpers.js';
 
@@ -43,6 +49,45 @@ describe('parseRobots', () => {
   });
   it('allows everything on unparsable URLs', () => {
     expect(parseRobots('').allows('https://site.test/')).toBe(true);
+  });
+});
+
+const storedPage = (url: string): StoredPage => ({
+  requestedUrl: url,
+  finalUrl: url,
+  content: `content of ${url}`,
+  branch: 'markdown',
+});
+
+describe('PageStore', () => {
+  it('evicts the oldest entry beyond the bound', () => {
+    const store = new PageStore(2);
+    store.put(storedPage('https://site.test/a'));
+    store.put(storedPage('https://site.test/b'));
+    store.put(storedPage('https://site.test/c'));
+    expect(store.get('https://site.test/a')).toBeUndefined();
+    expect(store.get('https://site.test/b')).toBeDefined();
+    expect(store.get('https://site.test/c')).toBeDefined();
+  });
+
+  it('re-putting a key refreshes its recency, so the untouched entry is evicted', () => {
+    const store = new PageStore(2);
+    store.put(storedPage('https://site.test/a'));
+    store.put(storedPage('https://site.test/b'));
+    store.put(storedPage('https://site.test/a'));
+    store.put(storedPage('https://site.test/c'));
+    expect(store.get('https://site.test/a')).toBeDefined();
+    expect(store.get('https://site.test/b')).toBeUndefined();
+  });
+
+  it('get refreshes recency, so a recently read entry survives the next put', () => {
+    const store = new PageStore(2);
+    store.put(storedPage('https://site.test/a'));
+    store.put(storedPage('https://site.test/b'));
+    expect(store.get('https://site.test/a')).toBeDefined();
+    store.put(storedPage('https://site.test/c'));
+    expect(store.get('https://site.test/a')).toBeDefined();
+    expect(store.get('https://site.test/b')).toBeUndefined();
   });
 });
 

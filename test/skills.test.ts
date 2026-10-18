@@ -77,6 +77,14 @@ describe('SKILL_ENTRIES', () => {
     expect(body).toContain(`name: ${entry.frontmatter.name}`);
     expect(body).toContain(`description: ${entry.frontmatter.description}`);
     expect(body.startsWith('---\n')).toBe(true);
+    // Spec: the entry's frontmatter MUST be identical in content to the
+    // SKILL.md's — exact equality, license included.
+    expect(entry.frontmatter).toEqual({
+      name: 'fact-check',
+      description:
+        'Verify a factual claim against multiple independent web sources using the SearXNG tools, ending in a verdict with citations.',
+      license: 'MIT',
+    });
   });
 });
 
@@ -114,7 +122,30 @@ describe('skills/list and skills/get', () => {
     expect(result.resultType).toBe('complete');
     expect(result.skill.uri).toBe(entry.uri);
     expect(() => get?.run({ uri: 'skill://nope/SKILL.md' })).toThrow(/Unknown skill/);
+    // Spec: an unknown uri is -32602 (Invalid params), not an internal error.
+    try {
+      get?.run({ uri: 'skill://nope/SKILL.md' });
+      throw new Error('skills/get must throw for an unknown uri');
+    } catch (error) {
+      expect((error as { code?: number }).code).toBe(-32602);
+    }
     expect(get?.params.safeParse({ uri: 'x' }).success).toBe(true);
     expect(get?.params.safeParse({}).success).toBe(false);
+  });
+
+  it('rejects any client cursor with -32602; the catalog is one complete page', () => {
+    const { server, handlers } = fakeServer();
+    registerSkills(server);
+    const list = handlers.get('skills/list');
+    expect(list).toBeDefined();
+    // The params schema stays permissive; the cursor check lives in the handler.
+    expect(list?.params.safeParse({ cursor: 'x' }).success).toBe(true);
+    try {
+      list?.run({ cursor: 'x' });
+      throw new Error('skills/list must throw for a cursor');
+    } catch (error) {
+      expect((error as { code?: number }).code).toBe(-32602);
+    }
+    expect(list?.run({})).toBeDefined();
   });
 });

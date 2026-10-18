@@ -65,6 +65,7 @@ async function synthesize(
   notes: DeepSearchDossier['notes'],
   sources: DeepSearchDossier['sources'],
   fetchImplOpt?: FetchLike,
+  signal?: AbortSignal,
 ): Promise<{ text?: string; note?: string }> {
   const endpoint = config.synthesisUrl;
   if (endpoint === undefined) {
@@ -88,6 +89,9 @@ async function synthesize(
   ];
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SYNTHESIS_TIMEOUT_MS);
+  // tasks/cancel aborts the in-flight POST instead of waiting out the full timeout.
+  const onTaskAbort = () => controller.abort();
+  signal?.addEventListener('abort', onTaskAbort, { once: true });
   // Cast bridges @types/node's vendored RequestInit and undici's own types.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   const fetchImpl: FetchLike = fetchImplOpt ?? (globalThis.fetch as FetchLike);
@@ -115,15 +119,15 @@ async function synthesize(
     }
     return { text: truncateText(text.trim(), 8_000) };
   } catch (error) {
-    const reason =
-      controller.signal.aborted && !(error instanceof SearxngError)
-        ? `timed out after ${SYNTHESIS_TIMEOUT_MS} ms`
-        : error instanceof Error
-          ? error.message
-          : String(error);
+    const reason = controller.signal.aborted
+      ? `timed out after ${SYNTHESIS_TIMEOUT_MS} ms`
+      : error instanceof Error
+        ? error.message
+        : String(error);
     return { note: `Synthesis failed (${reason}); dossier only.` };
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener('abort', onTaskAbort);
   }
 }
 
@@ -183,7 +187,7 @@ export async function deepSearch(
   };
   if (opts.signal?.aborted) throw new DeepSearchCancelled();
   opts.onProgress?.('synthesizing');
-  const synthesis = await synthesize(config, query, notes, sources, opts.fetchImpl);
+  const synthesis = await synthesize(config, query, notes, sources, opts.fetchImpl, opts.signal);
   if (synthesis.text !== undefined) dossier.synthesis = synthesis.text;
   if (synthesis.note !== undefined) dossier.synthesisNote = synthesis.note;
   return dossier;

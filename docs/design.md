@@ -94,7 +94,7 @@ aging matters. SearXNG aggregates upstream search engines; `fetch_content`
 retrieves and extracts a single page (or serves a crawled one from the
 store).
 
-Nine tools are exposed. The category tools — `search`, `image_search`,
+Thirteen tools are exposed. The category tools — `search`, `image_search`,
 `news_search`, `video_search`, `music_search`, `paper_search` —
 are generated from a declarative **category registry** (`src/categories/`):
 one `defineCategory` declaration per category — tool metadata, upstream
@@ -104,7 +104,8 @@ projector and per-result markdown lines — from which the input schema
 (`query`/`results`/`suggestions`/`unresponsiveEngines`), the handler and the
 tool registration are derived. `search` keeps a bespoke slice on top of its
 registry entry (user-chosen categories, answers/corrections/infoboxes, batch
-`queries`, `min_score`); `fetch_content`, `autocomplete` and `list_engines`
+`queries`, `min_score`); `fetch_content`, `autocomplete`, `list_engines`,
+`search_and_fetch`, `doctor`, `crawl_site` and `deep_search`
 are registered beside the registry loop. The category tools never download
 media — only URL strings (`thumbnailSrc`/`audioSrc`/`iframeSrc` are hooks for
 future embedded previews). Dates pass through `pickPublishedDate` (SearXNG
@@ -179,7 +180,8 @@ Dependency direction (per-module, as imported): `config`, `http`, `ssrf`,
 `schemas` → categories; `format` → categories + `schemas`; `searxng` →
 `cache`/`categories`/`html-results`/`http`/`config`/`schemas`; `autocompleter` → `searxng`/`cache`/`format`/`config`;
 `doctor`/`observability` → `searxng` (+ shared/config types); `crawl` →
-`fetch`/`refs`/`schemas`; `archive` → `fetch` (error classification);
+`fetch`/`refs`/`schemas` + `categories/shared`; `archive` → `fetch` (error
+classification) + `categories/shared`;
 `deep-search` → `searxng`/`fetch`/`otel`; `tasks` → shared (store only);
 `skills`/`apps` → the MCP SDK (+ embedded content); `pdf` → `http`; `fetch` →
 `config`/`ssrf`/`extract`/`markdown`/`pdf`/`http`/`schemas`/`otel` (+ type-only

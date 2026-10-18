@@ -63,6 +63,15 @@ describe('runDoctor', () => {
     expect(report.checks.find((check) => check.id === 'json_api')?.ok).toBe(false);
   });
 
+  it('reports limiter state from /config when the search probe fails with another error', async () => {
+    const report = await runDoctor(config, { fetchImpl: instanceFetch(500) });
+    expect(report.healthy).toBe(false);
+    const limiters = report.checks.filter((check) => check.id === 'limiter');
+    expect(limiters).toHaveLength(1);
+    expect(limiters[0]?.ok).toBe(true);
+    expect(limiters[0]?.detail).toContain('enabled');
+  });
+
   it('reports unreachable instances without throwing', async () => {
     const report = await runDoctor(config, {
       fetchImpl: asFetchLike(async () => {
