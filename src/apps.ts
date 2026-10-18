@@ -1,8 +1,9 @@
 /**
- * MCP Apps (Stage 6): io.modelcontextprotocol/apps per
- * modelcontextprotocol/ext-apps. One self-contained gallery app (ui://
- * resource, text/html;profile=mcp-app) backs image_search and video_search
- * via each tool's `_meta.ui.resourceUri`. The View speaks the iframe
+ * MCP Apps (Stage 6): io.modelcontextprotocol/ui per
+ * modelcontextprotocol/ext-apps (stable spec 2026-01-26: "This extension is
+ * identified as: io.modelcontextprotocol/ui"). One self-contained gallery app
+ * (ui:// resource, text/html;profile=mcp-app) backs image_search and
+ * video_search via each tool's `_meta.ui.resourceUri`. The View speaks the iframe
  * handshake with plain postMessage (the spec's no-SDK pattern) and renders
  * the tool result's structured content; hosts without Apps support never
  * load it, and those tools keep their text output unchanged — graceful
