@@ -132,6 +132,12 @@ export const fetchInput = z.object({
     .describe(
       'Return only one heading region: case-insensitive exact heading match, through the next same-or-higher-level heading.',
     ),
+  archive: z
+    .boolean()
+    .optional()
+    .describe(
+      'Fall back to the closest Internet Archive snapshot when the page is dead (404/410/5xx, unreachable or timed out). Overrides SEARXNG_ARCHIVE_FALLBACK.',
+    ),
 });
 export type FetchInput = z.infer<typeof fetchInput>;
 
@@ -157,6 +163,8 @@ export const fetchOutput = z.object({
       }),
     )
     .optional(),
+  // Present when the content came from an Internet Archive snapshot (Stage 3).
+  archived: z.boolean().optional(),
 });
 export type FetchResult = z.infer<typeof fetchOutput>;
 
@@ -296,6 +304,37 @@ export const doctorOutput = z.object({
   ),
 });
 export type DoctorResponse = z.infer<typeof doctorOutput>;
+
+/** crawl_site: BFS-crawl a site into a manifest with cached content (Stage 3). */
+export const crawlInput = z.object({
+  url: z
+    .string()
+    .min(1)
+    .max(2048)
+    .describe('The seed URL; same-origin links are followed from it.'),
+  max_pages: z
+    .number()
+    .int()
+    .min(1)
+    .max(30)
+    .default(10)
+    .describe('Maximum pages to fetch (1-30, default 10).'),
+});
+export type CrawlInput = z.infer<typeof crawlInput>;
+
+export const crawlOutput = z.object({
+  seed: z.string(),
+  crawled: z.number().int().nonnegative(),
+  pages: z.array(
+    z.object({
+      ref: z.number().int().positive(),
+      url: z.string(),
+      title: z.string(),
+      snippet: z.string(),
+    }),
+  ),
+});
+export type CrawlResponse = z.infer<typeof crawlOutput>;
 
 export const listEnginesOutput = z.object({
   engines: z.array(

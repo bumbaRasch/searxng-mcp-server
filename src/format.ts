@@ -21,6 +21,7 @@ import type {
 } from './categories/schemas.js';
 import {
   MAX_URLS_PER_INFOBOX,
+  type CrawlResponse,
   type DoctorResponse,
   type FetchResult,
   type ListEnginesResponse,
@@ -184,10 +185,29 @@ export function formatSearchAndFetch(response: SearchAndFetchResponse): string {
 export function formatFetchedPage(response: FetchResult): string {
   const lines: string[] = [];
   if (response.title) lines.push(`# ${sanitizeMeta(response.title)}`, '');
-  lines.push(`Source: ${sanitizeMeta(response.finalUrl)}`);
+  lines.push(
+    `Source: ${sanitizeMeta(response.finalUrl)}${response.archived === true ? ' (Internet Archive snapshot)' : ''}`,
+  );
   if (response.byline) lines.push(`Author: ${sanitizeMeta(response.byline)}`);
   lines.push(wrapUntrusted(response.content));
   return lines.join('\n').trim();
+}
+
+/** crawl_site (Stage 3): the manifest, wrapped like every web-derived output. */
+export function formatCrawl(response: CrawlResponse): string {
+  const body: string[] = [
+    `Crawled ${response.crawled} page${response.crawled === 1 ? '' : 's'} from ${sanitizeMeta(response.seed)}; cite ref:N to fetch_content a page.`,
+  ];
+  for (const page of response.pages) {
+    body.push(
+      '',
+      `## [ref:${page.ref}] ${sanitizeMeta(page.title) || '(untitled)'}`,
+      sanitizeMeta(page.url),
+    );
+    if (page.snippet !== '') body.push('', truncateText(page.snippet, COMPACT_SNIPPET_CHARS));
+  }
+  if (response.crawled === 0) body.push('No pages could be fetched.');
+  return wrapUntrusted(body.join('\n'));
 }
 
 /** Shared category skeleton; per-result lines come from the definition (D1).

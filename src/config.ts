@@ -36,6 +36,8 @@ export interface Config {
   maxResults?: number;
   /** Hostnames boosted by the `rerank` heuristic (`SEARXNG_RERANK_BOOST_DOMAINS`). */
   rerankBoostDomains: string[];
+  /** Wayback fallback for dead `fetch_content` links (`SEARXNG_ARCHIVE_FALLBACK`, Stage 3). */
+  archiveFallback: boolean;
 }
 
 type Env = Record<string, string | undefined>;
@@ -272,6 +274,7 @@ export function loadConfig(env: Env, version: string, warn: Warn = () => {}): Co
     allowedHosts: listEnv(env, 'SEARXNG_ALLOWED_HOSTS'),
     allowedOrigins: listEnv(env, 'SEARXNG_ALLOWED_ORIGINS'),
     rerankBoostDomains: listEnv(env, 'SEARXNG_RERANK_BOOST_DOMAINS'),
+    archiveFallback: boolEnv(env, 'SEARXNG_ARCHIVE_FALLBACK', false, warn),
     htmlFallback: boolEnv(env, 'SEARXNG_HTML_FALLBACK', false, warn),
   };
   // Optional D16 operator defaults: assigned only when configured (exactOptionalPropertyTypes).

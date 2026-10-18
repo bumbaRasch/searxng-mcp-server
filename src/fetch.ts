@@ -8,6 +8,7 @@ import { toMarkdown, truncateWithMarker } from './markdown.js';
 import { extractPdfContent, readPdfResponse, type PdfExtraction } from './pdf.js';
 import type { FetchResult } from './schemas.js';
 import { assertUrlAllowed, createGuardedDispatcher, type LookupAll } from './ssrf.js';
+import type { PageStore } from './crawl.js';
 
 interface FetchOptions {
   maxChars?: number | undefined;
@@ -17,6 +18,8 @@ interface FetchOptions {
   timeoutMs?: number | undefined;
   fetchImpl?: FetchLike | undefined;
   lookup?: LookupAll | undefined;
+  /** Crawled-page store: a hit serves the content without network (Stage 3). */
+  store?: PageStore | undefined;
 }
 
 export const MAX_REDIRECTS = 5;
@@ -95,17 +98,80 @@ export class FetchError extends Error {
   }
 }
 
+/** Metadata attached to a windowed result (shared by the network and store paths). */
+export interface WindowMeta {
+  url: string;
+  finalUrl: string;
+  title?: string | undefined;
+  byline?: string | undefined;
+  pages?: number | undefined;
+}
+
+export interface WindowOptions {
+  maxChars: number;
+  offset?: number | undefined;
+  outline?: boolean | undefined;
+  section?: string | undefined;
+}
+
+/** Reading controls (D14) + continuation window (D5), applied to extracted
+ * content regardless of where it came from (live fetch or crawled store). */
+export function windowExtracted(
+  extracted: string,
+  branch: 'markdown' | 'pdf',
+  meta: WindowMeta,
+  opts: WindowOptions,
+): FetchResult {
+  let effective = extracted;
+  if (opts.section !== undefined) {
+    const slice = sliceSection(scanHeadings(extracted, branch), extracted, opts.section);
+    if (slice === undefined) {
+      // Deliberately lists nothing from the document (D14).
+      throw new FetchError(
+        `No heading matches section ${JSON.stringify(opts.section)}; call outline=true first to list headings.`,
+      );
+    }
+    effective = slice;
+  }
+
+  // Continuation window (D5): slice at the offset first, then the existing cap.
+  const start = Math.max(0, Math.floor(opts.offset ?? 0));
+  const limit = Math.max(0, Math.floor(opts.maxChars));
+  const { content, truncated } = truncateWithMarker(effective.slice(start), limit);
+  const result: FetchResult = { url: meta.url, finalUrl: meta.finalUrl, content, truncated };
+  if (start + limit < effective.length) result.nextOffset = start + limit;
+  if (opts.outline === true) result.headings = scanHeadings(effective, branch);
+  if (meta.title !== undefined) result.title = meta.title;
+  if (meta.byline !== undefined) result.byline = meta.byline;
+  if (meta.pages !== undefined) result.pages = meta.pages;
+  return result;
+}
+
 export async function fetchContent(
   config: Config,
   rawUrl: string,
   opts: FetchOptions = {},
 ): Promise<FetchResult> {
+  // Crawled pages serve from the store: no network hop, same reading controls.
+  const stored = opts.store?.get(rawUrl);
+  if (stored !== undefined) {
+    return windowExtracted(
+      stored.content,
+      stored.branch,
+      { url: stored.requestedUrl, finalUrl: stored.finalUrl, title: stored.title },
+      {
+        maxChars: opts.maxChars ?? config.maxChars,
+        offset: opts.offset,
+        outline: opts.outline,
+        section: opts.section,
+      },
+    );
+  }
   // Cast bridges @types/node's vendored RequestInit and undici's own types
   // (two structural copies of the same dispatcher interface).
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   const fetchImpl: FetchLike = opts.fetchImpl ?? (undiciFetch as FetchLike);
   const maxChars = opts.maxChars ?? config.maxChars;
-  const offset = opts.offset ?? 0;
   const timeoutMs = opts.timeoutMs ?? config.fetchTimeoutMs;
   const lookupOpts = opts.lookup ? { lookup: opts.lookup } : {};
   // Pre-validation and the dispatcher share the same guarded lookup, so both
@@ -194,33 +260,20 @@ export async function fetchContent(
         }
       }
 
-      // Reading controls (D14): section first — it defines the effective
-      // document; outline offsets then index that same document. The
-      // continuation window below operates on the effective content too.
-      let effective = extracted;
-      const branch = isPdf ? 'pdf' : 'markdown';
-      if (opts.section !== undefined) {
-        const slice = sliceSection(scanHeadings(extracted, branch), extracted, opts.section);
-        if (slice === undefined) {
-          // Deliberately lists nothing from the document (D14).
-          throw new FetchError(
-            `No heading matches section ${JSON.stringify(opts.section)}; call outline=true first to list headings.`,
-          );
-        }
-        effective = slice;
-      }
-
-      // Continuation window (D5): slice at the offset first, then the existing cap.
-      const start = Math.max(0, Math.floor(offset));
-      const limit = Math.max(0, Math.floor(maxChars));
-      const { content, truncated } = truncateWithMarker(effective.slice(start), limit);
-      const result: FetchResult = { url: rawUrl, finalUrl: url.toString(), content, truncated };
-      if (start + limit < effective.length) result.nextOffset = start + limit;
-      if (opts.outline === true) result.headings = scanHeadings(effective, branch);
-      if (title) result.title = title;
-      if (byline) result.byline = byline;
-      if (pages !== undefined) result.pages = pages;
-      return result;
+      // Reading controls (D14) + continuation window (D5), shared with the
+      // store path: section defines the effective document, outline offsets
+      // index it, the window slices it.
+      return windowExtracted(
+        extracted,
+        isPdf ? 'pdf' : 'markdown',
+        { url: rawUrl, finalUrl: url.toString(), title, byline, pages },
+        {
+          maxChars,
+          offset: opts.offset,
+          outline: opts.outline,
+          section: opts.section,
+        },
+      );
     }
     throw new FetchError(`Too many redirects (max ${MAX_REDIRECTS}).`);
   } catch (error) {

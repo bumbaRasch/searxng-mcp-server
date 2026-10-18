@@ -444,6 +444,48 @@ async function main() {
     const statsBody = JSON.parse(statsRead.result?.contents?.[0]?.text ?? '{}');
     assert(Array.isArray(statsBody.engines), 'stats resource lists engine error summaries');
 
+    // 4e-crawl. crawl_site: one-page crawl of example.com, then fetch the
+    // crawled page via its ref (served from the crawl store).
+    const crawlCall = await request(serverProcess, 'tools/call', {
+      name: 'crawl_site',
+      arguments: { url: 'https://example.com', max_pages: 1 },
+    });
+    assert(!crawlCall.error && !crawlCall.result?.isError, 'crawl_site call succeeds');
+    const crawl = crawlCall.result?.structuredContent;
+    assert(
+      crawl?.crawled === 1 && crawl.pages?.[0]?.ref >= 1,
+      `crawl_site returns a one-page manifest (got ${crawl?.crawled})`,
+    );
+    const crawlRefFetch = await request(serverProcess, 'tools/call', {
+      name: 'fetch_content',
+      arguments: { url: `ref:${crawl.pages[0].ref}` },
+    });
+    assert(
+      !crawlRefFetch.error && !crawlRefFetch.result?.isError,
+      'fetch_content serves the crawled page via ref',
+    );
+    const crawlRefText = crawlRefFetch.result?.content?.[0]?.text ?? '';
+    assert(/example/i.test(crawlRefText), 'crawled page content mentions the site');
+
+    // 4e-archive. Wayback fallback: a dead URL with archive:true either comes
+    // back as an archived snapshot or errors cleanly (soft — snapshot
+    // availability is an external service).
+    const archiveCall = await request(serverProcess, 'tools/call', {
+      name: 'fetch_content',
+      arguments: {
+        url: `https://example.com/not-here-${Date.now()}`,
+        archive: true,
+      },
+    });
+    if (archiveCall.result?.isError === true) {
+      console.log('SKIPPED (archive): no snapshot available for the dead URL');
+    } else {
+      assert(
+        archiveCall.result?.structuredContent?.archived === true,
+        'archive fallback returns an archived snapshot',
+      );
+    }
+
     // 4f. paper_search against the scientific publications category
     const paperCall = await request(serverProcess, 'tools/call', {
       name: 'paper_search',

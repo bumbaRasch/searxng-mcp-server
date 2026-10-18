@@ -8,10 +8,13 @@ import {
 } from './autocompleter.js';
 import type { TtlCache } from './cache.js';
 import type { Config } from './config.js';
+import { crawlSite, sharedPages, type PageStore } from './crawl.js';
 import { runDoctor } from './doctor.js';
 import { fetchContent } from './fetch.js';
+import { isDeadLinkError, findArchivedSnapshot } from './archive.js';
 import {
   formatCategoryResults,
+  formatCrawl,
   formatDoctor,
   formatFetchedPage,
   formatListEngines,
@@ -34,6 +37,8 @@ import { musicCategory } from './categories/music.js';
 import { newsCategory } from './categories/news.js';
 import { videoCategory } from './categories/videos.js';
 import {
+  crawlInput,
+  crawlOutput,
   doctorInput,
   doctorOutput,
   fetchInput,
@@ -47,6 +52,8 @@ import {
   toCategorySearchParams,
   toSearchParams,
   type CategoryToolInput,
+  type CrawlInput,
+  type CrawlResponse,
   type DoctorInput,
   type DoctorResponse,
   type FetchInput,
@@ -76,6 +83,8 @@ export interface ToolDeps {
   cache?: TtlCache<unknown> | undefined;
   /** Citation ref session; registerTools defaults it to the process-wide sharedRefs. */
   refs?: RefRegistry | undefined;
+  /** Crawled-page store; registerTools defaults it to the process-wide sharedPages. */
+  pages?: PageStore | undefined;
 }
 
 const UNTRUSTED_SUFFIX =
@@ -129,6 +138,38 @@ export const handleSearch = createCategoryHandler<
 /** `fetch_content` accepts ref:N in place of a URL (Stage 1 citations). */
 const REF_ARG = /^ref:(\d{1,9})$/i;
 
+/** Wayback fallback (Stage 3): retry dead links through the closest archived
+ * snapshot when the operator or the call opted in. Policy refusals never
+ * trigger it — the archive must not become a way around the SSRF guard. */
+async function fetchWithArchiveFallback(
+  config: Config,
+  url: string,
+  args: FetchInput,
+  deps: ToolDeps,
+): Promise<FetchResult> {
+  const opts = {
+    maxChars: args.max_chars,
+    offset: args.offset,
+    outline: args.outline,
+    section: args.section,
+    timeoutMs: args.timeout_ms,
+    fetchImpl: deps.fetchImpl,
+    lookup: deps.lookup,
+    store: deps.pages,
+  };
+  try {
+    return await fetchContent(config, url, opts);
+  } catch (error) {
+    const archiveEnabled = args.archive ?? config.archiveFallback;
+    if (!archiveEnabled || !isDeadLinkError(error)) throw error;
+    const snapshot = await findArchivedSnapshot(url, deps.fetchImpl);
+    if (snapshot === undefined) throw error;
+    const result = await fetchContent(config, snapshot, opts);
+    result.archived = true;
+    return result;
+  }
+}
+
 export async function handleFetch(
   config: Config,
   args: FetchInput,
@@ -155,15 +196,7 @@ export async function handleFetch(
       }
       url = resolved;
     }
-    const result = await fetchContent(config, url, {
-      maxChars: args.max_chars,
-      offset: args.offset,
-      outline: args.outline,
-      section: args.section,
-      timeoutMs: args.timeout_ms,
-      fetchImpl: deps.fetchImpl,
-      lookup: deps.lookup,
-    });
+    const result = await fetchWithArchiveFallback(config, url, args, deps);
     return {
       content: [{ type: 'text', text: formatFetchedPage(result) }],
       structuredContent: sanitizeStructured(result),
@@ -174,6 +207,19 @@ export async function handleFetch(
     return { content: [{ type: 'text', text }], isError: true };
   }
 }
+
+export const handleCrawl = createCategoryHandler<CrawlInput, CrawlResponse>(
+  'crawl_site failed',
+  (config, args, deps) =>
+    crawlSite(config, args.url, {
+      maxPages: args.max_pages,
+      fetchImpl: deps.fetchImpl,
+      lookup: deps.lookup,
+      refs: deps.refs ?? sharedRefs,
+      store: deps.pages ?? sharedPages,
+    }),
+  formatCrawl,
+);
 
 /** D15: the primary instance's listing plus the aggregation summary; the full
  * per-instance engine lists live in the structured content. */
@@ -305,12 +351,13 @@ export const TOOL_NAMES = [
   'autocomplete',
   'list_engines',
   'doctor',
+  'crawl_site',
 ] as const;
 
 export function registerTools(server: McpServer, config: Config, deps: ToolDeps = {}): void {
-  // The ref session is process-scope: HTTP serving is stateless per request,
-  // so the default must outlive a single server instance.
-  const effectiveDeps: ToolDeps = { refs: sharedRefs, ...deps };
+  // The ref session and page store are process-scope: HTTP serving is
+  // stateless per request, so defaults must outlive a single server instance.
+  const effectiveDeps: ToolDeps = { refs: sharedRefs, pages: sharedPages, ...deps };
   for (const entry of categoryDefinitions) {
     if (entry.tool.name === 'search') {
       // Web search keeps its bespoke slice: user-chosen categories plus the
@@ -420,5 +467,20 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
       icons: TOOL_ICONS,
     },
     (args) => handleDoctor(config, args, effectiveDeps),
+  );
+
+  server.registerTool(
+    'crawl_site',
+    {
+      title: 'Crawl a site (SearXNG companion)',
+      description: withUntrustedSuffix(
+        'Crawl a website starting from a seed URL: follows same-origin links breadth-first up to max_pages (1-30, default 10), honoring robots.txt best-effort, every page through the SSRF-guarded fetch pipeline. Returns a URL/title/snippet manifest where each page carries a stable ref; the extracted content is cached, so a later fetch_content with ref:N serves it without re-fetching. Use it to survey a site before reading specific pages.',
+      ),
+      inputSchema: crawlInput,
+      outputSchema: crawlOutput,
+      annotations: TOOL_ANNOTATIONS,
+      icons: TOOL_ICONS,
+    },
+    (args) => handleCrawl(config, args, effectiveDeps),
   );
 }
