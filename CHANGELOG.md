@@ -7,6 +7,117 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-18
+
+The "wow edition": one release, seven feature waves, all built on the
+2026-07-28 protocol revision (stateless serving, no deprecated primitives —
+no Sampling, Roots or Logging anywhere in the new surface).
+
+### Added
+
+- **Citations & ref tokens** — every `search` result (single and batch) carries
+  a session-stable `ref`; the text rendering shows `[ref:N]` next to each URL.
+  `fetch_content` accepts `ref:N` in place of a URL, so a model never has to
+  repeat long URLs. Refs are minted by a process-scope bounded registry
+  (`src/refs.ts`): the same URL keeps its ref for the process lifetime, numbers
+  are never reused (an evicted ref resolves to an error, never to a different
+  URL), and the session survives the per-request server instances of the HTTP
+  transport. Protocol basis: `structuredContent` must conform to the tool's
+  `outputSchema` (SDK-validated server-side), so `ref` is declared in the
+  schema.
+- **`search_and_fetch`** — one call that searches and immediately fetches the
+  full Markdown of the top `fetch_top` (1–5, default 3) results; failed pages
+  degrade to `error` entries in `pages[]` instead of failing the call.
+- **Heuristic rerank** — opt-in `rerank: true` on `search` and
+  `search_and_fetch` reorders delivered results by query/title overlap,
+  freshness (linear decay over one year) and configured domain boosts
+  (`SEARXNG_RERANK_BOOST_DOMAINS`), with stable tie-breaking on top of the instance
+  ranking and the `min_score` floor (`src/rerank.ts`).
+- **`doctor`** — diagnoses the connected instance: JSON API availability
+  (`format=json` probe), `/config` reachability, unresponsive engines from a
+  probe search, and limiter state. Probes the primary instance only (no
+  failover — a healthy replica must not mask the configured instance) and
+  returns structured `checks[]` with a `healthy` verdict.
+- **Observability resources** — `config://searxng` (defensively projected
+  `/config`: name, version, limiter, engines, categories) and
+  `stats://engines/errors` (per-engine error counts from `/stats/errors`;
+  the `/stats` page is HTML-only, verified against `searx/webapp.py`).
+- **`crawl_site`** — BFS-crawls a site from a seed URL into a
+  URL/title/snippet manifest with stable refs: same-origin links only (parsed
+  from the absolutized Markdown), `max_pages` cap (1–30), cycle-safe,
+  robots.txt honored best-effort (prefix `Disallow` for the `*` group). Every
+  page goes through the existing SSRF-guarded fetch pipeline, and the
+  extracted content lands in a bounded process-scope store that
+  `fetch_content` serves without re-fetching (outline/section/offset controls
+  intact via the shared `windowExtracted` path).
+- **Wayback fallback** — opt-in (`SEARXNG_ARCHIVE_FALLBACK` or per-call
+  `archive: true` on `fetch_content`): dead links (404/410/5xx, network
+  failures, timeouts) retry through the closest
+  `archive.org/wayback/available` snapshot, still SSRF-guarded, marked
+  `archived: true`. Policy refusals (private hosts, unsupported content
+  types, scheme downgrades) never trigger the fallback.
+- **Tasks extension** — `io.modelcontextprotocol/tasks` per
+  `modelcontextprotocol/ext-tasks`: a tasks-capable `tools/call` (capability
+  declared in the request `_meta` envelope) may receive a `CreateTaskResult`
+  (`resultType: "task"`) and poll `tasks/get` until `completed`; `tasks/cancel`
+  is cooperative with worker `AbortSignal`s; task ids are UUIDv4 (unguessable
+  per spec), terminal states are immutable, the store is bounded and TTL'd,
+  and there is no `tasks/list` (by spec). Served through the SDK's
+  explicit-schema custom-method seam (`tasks/get` and `tasks/cancel` are the
+  only task names the 2026-07-28 wire keeps).
+- **`deep_search`** — iterative research loop: search (rerank on), select the
+  top uncited sources, fetch through the SSRF guard, and return a cited
+  dossier with stable refs. Optional synthesis via
+  `SEARXNG_SYNTHESIS_URL`/`SEARXNG_SYNTHESIS_MODEL` (OpenAI-compatible
+  chat completions; Ollama's native `/api/chat` response shape also read)
+  degrades to dossier-only on any failure. Without the tasks capability the
+  run is bounded inline — graceful degradation per the spec. **No client-side
+  sampling**: Sampling is deprecated in 2026-07-28, so the synthesis step is a
+  server-side API call.
+- **Skills over MCP** — `io.modelcontextprotocol/skills` per SEP-2640 (Final):
+  three built-in skills in Agent Skills format — `fact-check`,
+  `literature-review`, `news-monitoring` — served as `skill://<name>/SKILL.md`
+  resources plus complete `skills/list`/`skills/get` entries (verbatim
+  frontmatter, per-file sha256 digests and sizes over the exact bytes served,
+  cacheable-result envelope).
+- **MCP Apps gallery** — `io.modelcontextprotocol/apps` per `ext-apps`: one
+  self-contained gallery app (`ui://searxng-gallery/app.html`,
+  `text/html;profile=mcp-app`) renders `image_search`/`video_search` results
+  as a thumbnail grid, linked via each tool's `_meta.ui.resourceUri`. The View
+  speaks the iframe handshake with plain postMessage and renders untrusted
+  data only through safe DOM APIs. Hosts without Apps support keep the
+  unchanged text output — graceful degradation is part of the spec.
+- **Protocol polish (2026-07-28)** — `server/discover` served by the SDK
+  (verified live: versions, capabilities, serverInfo); meaningful
+  `ttlMs`/`cacheScope` hints on the cacheable results (`tools/list` 300 s
+  public, `resources/list` 60 s public, `server/discover` 3600 s public;
+  `resources/read` keeps the conservative default because `config://` and
+  `stats://` are live); deterministic `tools/list` ordering pinned by the
+  `TOOL_NAMES` regression test; OTel trace passthrough (SEP-414): a W3C
+  `traceparent` in the request `_meta` envelope propagates through
+  AsyncLocalStorage to outbound SearXNG calls, page fetches and synthesis
+  requests as a `traceparent` header — invalid values are never forwarded.
+
+### Changed
+
+- Tool count grows from nine to thirteen: `search`, `image_search`,
+  `news_search`, `video_search`, `music_search`, `paper_search`,
+  `fetch_content`, `autocomplete`, `list_engines` (as in 0.5.x) plus
+  `search_and_fetch`, `doctor`, `crawl_site` and `deep_search`. `tools/list`
+  advertises `ttlMs: 300000, cacheScope: "public"` and every tool keeps its
+  untrusted-content suffix and icons.
+
+### Security
+
+- Ref sessions, the crawl page store and the task store are process-scope and
+  bounded (512 refs / 256 pages / 64 tasks) with monotonic, never-reused task
+  and ref ids.
+- Archive fallback is a deliberate opt-in that never bypasses the SSRF guard:
+  the snapshot URL re-enters the same guarded pipeline, and policy refusals
+  are ineligible for the fallback by construction.
+- `SEARXNG_SYNTHESIS_URL` is operator config like `SEARXNG_URL`: validated
+  http/https, redacted in warnings, never logged.
+
 ## [0.5.2] - 2026-10-14
 
 ### Changed
