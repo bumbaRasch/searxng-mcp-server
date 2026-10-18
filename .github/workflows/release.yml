@@ -24,6 +24,20 @@ jobs:
       # (prepublishOnly re-runs the gate, but only after that validation).
       - run: pnpm build
       - run: npm publish --provenance
+      # MCP Registry publish, immediately after npm publish (the registry
+      # hosts metadata only and requires the npm package to exist first).
+      # GitHub OIDC: no dedicated secret — id-token: write above lets GitHub
+      # mint a fresh short-lived JWT per job run, replacing the manual
+      # mcp-publisher login whose JWT expired between releases. The install
+      # intentionally uses releases/latest: an outdated binary fails against
+      # the registry with "invalid audience".
+      - name: Install mcp-publisher
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+      - name: Log in to the MCP Registry via GitHub OIDC
+        run: ./mcp-publisher login github-oidc
+      - name: Publish to the MCP Registry
+        run: ./mcp-publisher publish
       - run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}

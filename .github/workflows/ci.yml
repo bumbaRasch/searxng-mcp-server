@@ -38,6 +38,27 @@ jobs:
       - run: pnpm pack
       - run: tar -tzf searxng-mcp-server-*.tgz | grep -E 'dist/index\.js'
       - run: tar -tzf searxng-mcp-server-*.tgz | grep -E '(README\.md|LICENSE)'
+      # The MCP Registry limits server.json description to 100 chars, and that
+      # used to surface only at publish time. mcp-publisher validate POSTs the
+      # file to the registry's /v0/validate endpoint (exhaustive JSON/schema/
+      # semantic validation; no login needed, but needs network access) and its
+      # non-zero exit fails the job. The version pin is the release tag in the
+      # URL: this is a run: step, so Renovate's pinGitHubActionDigests does not
+      # manage it — raise the pin by hand when the registry ships a newer
+      # mcp-publisher (an old binary fails against the registry with
+      # "invalid audience").
+      - name: Validate server.json against the MCP Registry
+        run: |
+          curl -fsSL -o mcp-publisher.tar.gz "https://github.com/modelcontextprotocol/registry/releases/download/v1.8.1/mcp-publisher_linux_amd64.tar.gz"
+          echo 'a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc  mcp-publisher.tar.gz' | sha256sum --check -
+          tar xzf mcp-publisher.tar.gz mcp-publisher
+          ./mcp-publisher validate server.json
+  # Decision on e2e gating (final): e2e deliberately stays out of the PR
+  # gate. It boots a live docker-compose SearXNG and talks to it over the
+  # real network — a standing source of false reds on PRs. The mandatory
+  # signal is the nightly schedule run (plus manual workflow_dispatch);
+  # retries against flakes are a separate future stage, not a reason to gate
+  # PRs on e2e.
   e2e:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
