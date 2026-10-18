@@ -8,9 +8,11 @@ import {
 } from './autocompleter.js';
 import type { TtlCache } from './cache.js';
 import type { Config } from './config.js';
+import { runDoctor } from './doctor.js';
 import { fetchContent } from './fetch.js';
 import {
   formatCategoryResults,
+  formatDoctor,
   formatFetchedPage,
   formatListEngines,
   formatSearchAndFetch,
@@ -32,6 +34,8 @@ import { musicCategory } from './categories/music.js';
 import { newsCategory } from './categories/news.js';
 import { videoCategory } from './categories/videos.js';
 import {
+  doctorInput,
+  doctorOutput,
   fetchInput,
   fetchOutput,
   listEnginesInput,
@@ -43,6 +47,8 @@ import {
   toCategorySearchParams,
   toSearchParams,
   type CategoryToolInput,
+  type DoctorInput,
+  type DoctorResponse,
   type FetchInput,
   type FetchResult,
   type FetchedPage,
@@ -205,6 +211,13 @@ export const handleAutocomplete = createCategoryHandler(
   formatAutocomplete,
 );
 
+export const handleDoctor = createCategoryHandler<DoctorInput, DoctorResponse>(
+  'Doctor failed',
+  (config, _args: DoctorInput, deps) =>
+    runDoctor(config, { fetchImpl: deps.fetchImpl, cache: deps.cache }),
+  formatDoctor,
+);
+
 /** Registration only leans on the result shape every category shares;
  * method bivariance makes every concrete declaration assignable to it. */
 type AnyCategoryResult = { title: string; url: string; content?: string };
@@ -291,6 +304,7 @@ export const TOOL_NAMES = [
   'search_and_fetch',
   'autocomplete',
   'list_engines',
+  'doctor',
 ] as const;
 
 export function registerTools(server: McpServer, config: Config, deps: ToolDeps = {}): void {
@@ -391,5 +405,20 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
       icons: TOOL_ICONS,
     },
     (args) => handleListEngines(config, args, effectiveDeps),
+  );
+
+  server.registerTool(
+    'doctor',
+    {
+      title: 'SearXNG instance doctor',
+      description: withUntrustedSuffix(
+        'Diagnose the connected SearXNG instance: JSON API availability (format=json probe), /config reachability, unresponsive engines on a probe search, and limiter state. Use it when searches fail or return empty to find out whether the instance is the problem. healthy is true when every check passed; checks carry id, ok and a human-readable detail.',
+      ),
+      inputSchema: doctorInput,
+      outputSchema: doctorOutput,
+      annotations: TOOL_ANNOTATIONS,
+      icons: TOOL_ICONS,
+    },
+    (args) => handleDoctor(config, args, effectiveDeps),
   );
 }

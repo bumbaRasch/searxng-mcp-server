@@ -20,6 +20,7 @@ import { musicCategory } from './categories/music.js';
 import { newsCategory } from './categories/news.js';
 import { videoCategory } from './categories/videos.js';
 import type { RefRegistry } from './refs.js';
+import { rerankResults } from './rerank.js';
 import type {
   ImageSearchResponse,
   MusicSearchResponse,
@@ -313,6 +314,21 @@ async function fetchSearchJson(config: Config, params: SearchParams, opts: Clien
   );
 }
 
+/** Direct probe of the PRIMARY instance — no failover (a replica answering
+ * would mask the configured instance's failure) and no cache (a probe must
+ * observe liveness). Powers doctor and the observability resources. */
+export async function probeInstanceJson(
+  config: Config,
+  path: string,
+  opts: ClientOptions = {},
+): Promise<unknown> {
+  return fetchInstanceJson(config, `${config.searxngUrl}${path}`, {
+    fetchImpl: opts.fetchImpl,
+    explainStatus: (status) => `SearXNG probe failed with HTTP ${status}.`,
+    explainBadJson: 'SearXNG probe returned a non-JSON response.',
+  });
+}
+
 /** Same query without `format=json` — the instance's HTML UI (D13). */
 function htmlSearchUrl(base: string, params: SearchParams): string {
   const qs = buildSearchParams(params);
@@ -391,7 +407,16 @@ export async function search(
     });
   }
   const response = mapSearchResponse(raw, effective.maxResults, effective.minScore);
-  return opts.refs === undefined ? response : withRefs(opts.refs, response);
+  const reranked =
+    effective.rerank === true
+      ? {
+          ...response,
+          results: rerankResults(effective.query, response.results, {
+            boostDomains: config.rerankBoostDomains,
+          }),
+        }
+      : response;
+  return opts.refs === undefined ? reranked : withRefs(opts.refs, reranked);
 }
 
 /** Batch fan-out: concurrent queries with the shared timeout, input-ordered results (D6). */

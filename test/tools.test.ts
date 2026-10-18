@@ -6,6 +6,8 @@ import { RefRegistry } from '../src/refs.js';
 import type { FetchLike } from '../src/http.js';
 import type { LookupAll } from '../src/ssrf.js';
 import {
+  doctorInput,
+  doctorOutput,
   fetchInput,
   fetchOutput,
   listEnginesOutput,
@@ -27,6 +29,7 @@ import {
 } from '../src/categories/schemas.js';
 import {
   handleAutocomplete,
+  handleDoctor,
   handleFetch,
   handleImageSearch,
   handleListEngines,
@@ -120,6 +123,15 @@ const twoResultFetch: FetchLike = async () =>
     results: [
       { title: 'R1', url: 'https://r.test/1', content: 'c' },
       { title: 'R2', url: 'https://r.test/2', content: 'c' },
+    ],
+  });
+
+const overlapFetch: FetchLike = async () =>
+  jsonResponse({
+    query: 'rust async',
+    results: [
+      { title: 'first upstream', url: 'https://r.test/1', content: '' },
+      { title: 'rust async runtime', url: 'https://r.test/2', content: '' },
     ],
   });
 
@@ -840,5 +852,47 @@ describe('citation refs', () => {
     expect(structured.pages[1]?.title).toBe('Doc');
     expect(structured.pages[1]?.content).toContain('word');
     expect(result.content[0]?.text).toMatch(/Not fetched — connection reset/);
+  });
+});
+
+describe('rerank wiring', () => {
+  it('search with rerank reorders delivered results by the heuristic', async () => {
+    const result = await handleSearch(
+      config,
+      searchInput.parse({ query: 'rust async', rerank: true }),
+      { fetchImpl: overlapFetch },
+    );
+    const structured = searchOutput.parse(result.structuredContent);
+    expect(structured.results[0]?.title).toBe('rust async runtime');
+  });
+
+  it('search without rerank keeps the upstream order', async () => {
+    const result = await handleSearch(config, searchInput.parse({ query: 'rust async' }), {
+      fetchImpl: overlapFetch,
+    });
+    const structured = searchOutput.parse(result.structuredContent);
+    expect(structured.results[0]?.title).toBe('first upstream');
+  });
+
+  it('handleDoctor returns a structured report', async () => {
+    const result = await handleDoctor(config, doctorInput.parse({}), {
+      fetchImpl: asFetchLike(async (url: string) =>
+        url.includes('/search?')
+          ? jsonResponse({
+              query: 'searxng',
+              results: [{ title: 'T', url: 'https://r.test/x', content: 'c' }],
+              unresponsive_engines: [],
+            })
+          : jsonResponse({
+              engines: { w: { name: 'wikipedia', enabled: true, categories: ['general'] } },
+              limiter: false,
+              version: '2026.10.13',
+            }),
+      ),
+    });
+    expect(result.isError).toBeUndefined();
+    const structured = doctorOutput.parse(result.structuredContent);
+    expect(structured.healthy).toBe(true);
+    expect(result.content[0]?.text).toContain('all checks passed');
   });
 });

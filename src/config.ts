@@ -34,6 +34,8 @@ export interface Config {
   defaultSafesearch?: 0 | 1 | 2;
   /** Ceiling on request `max_results`; larger requests clamp (`SEARXNG_MAX_RESULTS`, D16). */
   maxResults?: number;
+  /** Hostnames boosted by the `rerank` heuristic (`SEARXNG_RERANK_BOOST_DOMAINS`). */
+  rerankBoostDomains: string[];
 }
 
 type Env = Record<string, string | undefined>;
@@ -269,6 +271,7 @@ export function loadConfig(env: Env, version: string, warn: Warn = () => {}): Co
     port: intEnv(env, 'PORT', DEFAULT_HTTP_PORT, warn, 1, MAX_PORT, false),
     allowedHosts: listEnv(env, 'SEARXNG_ALLOWED_HOSTS'),
     allowedOrigins: listEnv(env, 'SEARXNG_ALLOWED_ORIGINS'),
+    rerankBoostDomains: listEnv(env, 'SEARXNG_RERANK_BOOST_DOMAINS'),
     htmlFallback: boolEnv(env, 'SEARXNG_HTML_FALLBACK', false, warn),
   };
   // Optional D16 operator defaults: assigned only when configured (exactOptionalPropertyTypes).
