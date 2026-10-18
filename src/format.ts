@@ -21,6 +21,7 @@ import type {
 } from './categories/schemas.js';
 import {
   MAX_URLS_PER_INFOBOX,
+  type DoctorResponse,
   type FetchResult,
   type ListEnginesResponse,
   type SearchAndFetchResponse,
@@ -230,6 +231,21 @@ export function formatVideoResults(response: VideoSearchResponse, detail?: Detai
 
 export function formatMusicResults(response: MusicSearchResponse, detail?: DetailLevel): string {
   return formatCategoryResults(musicCategory, response, detail);
+}
+
+export function formatDoctor(response: DoctorResponse): string {
+  const failed = response.checks.filter((check) => !check.ok).length;
+  const lines: string[] = [
+    `# Doctor report — ${
+      response.healthy
+        ? 'all checks passed'
+        : `${failed} of ${response.checks.length} checks failed`
+    }`,
+  ];
+  for (const check of response.checks) {
+    lines.push(`${check.ok ? '✓' : '✗'} ${check.id}: ${sanitizeMeta(check.detail)}`);
+  }
+  return lines.join('\n');
 }
 
 export function formatListEngines(response: ListEnginesResponse): string {

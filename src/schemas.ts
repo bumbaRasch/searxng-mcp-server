@@ -34,6 +34,12 @@ export const searchInput = z
     safesearch: safesearchArg,
     max_results: maxResultsArg,
     min_score: minScoreArg,
+    rerank: z
+      .boolean()
+      .optional()
+      .describe(
+        'Reorder results with a heuristic rerank (query/title overlap, freshness, configured domain boosts) on top of the instance ranking.',
+      ),
     detail: detailArg,
   })
   .superRefine((input, ctx) => {
@@ -169,6 +175,12 @@ export const searchAndFetchInput = z.object({
   safesearch: safesearchArg,
   max_results: maxResultsArg,
   min_score: minScoreArg,
+  rerank: z
+    .boolean()
+    .optional()
+    .describe(
+      'Reorder results with a heuristic rerank (query/title overlap, freshness, configured domain boosts) on top of the instance ranking.',
+    ),
   fetch_top: z
     .number()
     .int()
@@ -202,7 +214,7 @@ export type SearchAndFetchResponse = z.infer<typeof searchAndFetchOutput>;
 type TimeRange = NonNullable<z.infer<typeof timeRangeArg>>;
 type Safesearch = NonNullable<z.infer<(typeof searchInput.shape)['safesearch']>>;
 
-export interface SearchParams {
+export type SearchParams = {
   query: string;
   categories?: string[] | undefined;
   engines?: string[] | undefined;
@@ -212,7 +224,8 @@ export interface SearchParams {
   safesearch?: Safesearch | undefined;
   maxResults: number;
   minScore?: number | undefined;
-}
+  rerank?: boolean | undefined;
+};
 
 /** Tool arguments shared by every category tool, time_range included when supported. */
 export interface CategoryToolInput {
@@ -250,6 +263,7 @@ export function toSearchParams(input: SearchInput): SearchParams {
     safesearch: input.safesearch,
     maxResults: input.max_results,
     minScore: input.min_score,
+    rerank: input.rerank,
   };
 }
 
@@ -267,6 +281,21 @@ export function toCategorySearchParams(
 
 export const listEnginesInput = z.object({});
 export type ListEnginesInput = z.infer<typeof listEnginesInput>;
+
+export const doctorInput = z.object({});
+export type DoctorInput = z.infer<typeof doctorInput>;
+
+export const doctorOutput = z.object({
+  healthy: z.boolean(),
+  checks: z.array(
+    z.object({
+      id: z.string(),
+      ok: z.boolean(),
+      detail: z.string(),
+    }),
+  ),
+});
+export type DoctorResponse = z.infer<typeof doctorOutput>;
 
 export const listEnginesOutput = z.object({
   engines: z.array(

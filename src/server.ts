@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/server';
 import { TtlCache } from './cache.js';
 import type { Config } from './config.js';
 import { SERVER_ICONS } from './icon.js';
+import { registerObservabilityResources } from './observability.js';
 import { registerTools, type ToolDeps } from './tools.js';
 import { VERSION } from './version.js';
 
@@ -24,5 +25,6 @@ export function createServer(config: Config, deps: ToolDeps = {}): McpServer {
       ? new TtlCache<unknown>(CACHE_MAX_ENTRIES, config.cacheTtlMs)
       : undefined);
   registerTools(server, config, { ...deps, cache });
+  registerObservabilityResources(server, config, { ...deps, cache });
   return server;
 }

@@ -211,6 +211,7 @@ describe('every tool answers over transport', () => {
     autocomplete: { query: 'q' },
     paper_search: { query: 'q' },
     list_engines: {},
+    doctor: {},
   };
 
   it.each([...TOOL_NAMES])('%s returns a result over the transport', async (name) => {

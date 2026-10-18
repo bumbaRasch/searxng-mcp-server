@@ -392,6 +392,58 @@ async function main() {
       `list_engines reports enabled engines (got ${enginesCall.result?.structuredContent?.counts?.engines ?? 0})`,
     );
 
+    // 4e-doctor. instance doctor: all checks against the live stack
+    const doctorCall = await request(serverProcess, 'tools/call', {
+      name: 'doctor',
+      arguments: {},
+    });
+    assert(!doctorCall.error && !doctorCall.result?.isError, 'doctor call succeeds');
+    const doctor = doctorCall.result?.structuredContent;
+    assert(
+      Array.isArray(doctor?.checks) && doctor.checks.length >= 3,
+      'doctor returns multiple checks',
+    );
+    // The local (deterministic) checks must pass; unresponsive ENGINES depend
+    // on the public internet and may legitimately fail on a probe search.
+    const doctorCheck = (id) => doctor.checks.find((check) => check.id === id);
+    assert(doctorCheck('config_endpoint')?.ok === true, 'doctor: config endpoint reachable');
+    assert(doctorCheck('json_api')?.ok === true, 'doctor: JSON API answers');
+    assert(
+      doctor?.healthy === doctor.checks.every((check) => check.ok),
+      'doctor: healthy flag consistent with the checks',
+    );
+
+    // 4e-rerank. heuristic rerank on search
+    const rerankCall = await request(serverProcess, 'tools/call', {
+      name: 'search',
+      arguments: { query: 'searxng metasearch', rerank: true, max_results: 10 },
+    });
+    assert(!rerankCall.error && !rerankCall.result?.isError, 'search with rerank succeeds');
+    assert(
+      Array.isArray(rerankCall.result?.structuredContent?.results),
+      'rerank search returns results',
+    );
+
+    // 4e-resources. observability resources: list + read both views
+    const resourcesList = await request(serverProcess, 'resources/list', {});
+    const resourceUris = (resourcesList.result?.resources ?? []).map((resource) => resource.uri);
+    for (const uri of ['config://searxng', 'stats://engines/errors']) {
+      assert(resourceUris.includes(uri), `resources/list advertises "${uri}"`);
+    }
+    const configRead = await request(serverProcess, 'resources/read', {
+      uri: 'config://searxng',
+    });
+    assert(!configRead.error, 'resources/read config://searxng succeeds');
+    const configBody = JSON.parse(configRead.result?.contents?.[0]?.text ?? '{}');
+    assert(Array.isArray(configBody.engines), 'config resource lists engines');
+    assert(typeof configBody.limiter === 'boolean', 'config resource reports limiter state');
+    const statsRead = await request(serverProcess, 'resources/read', {
+      uri: 'stats://engines/errors',
+    });
+    assert(!statsRead.error, 'resources/read stats://engines/errors succeeds');
+    const statsBody = JSON.parse(statsRead.result?.contents?.[0]?.text ?? '{}');
+    assert(Array.isArray(statsBody.engines), 'stats resource lists engine error summaries');
+
     // 4f. paper_search against the scientific publications category
     const paperCall = await request(serverProcess, 'tools/call', {
       name: 'paper_search',
