@@ -35,12 +35,14 @@ export async function runDoctor(config: Config, opts: ClientOptions = {}): Promi
 
   // /config probe: reachability, engine inventory, limiter + version state.
   let limiterOn = false;
+  let configOk = false;
   try {
     const raw = await probeInstanceJson(config, '/config', opts);
     const data = isRecord(raw) ? raw : {};
     limiterOn = data.limiter === true;
     const version = typeof data.version === 'string' ? data.version : '';
     const counts = mapEnginesResponse(raw).counts;
+    configOk = true;
     checks.push({
       id: 'config_endpoint',
       ok: true,
@@ -55,6 +57,11 @@ export async function runDoctor(config: Config, opts: ClientOptions = {}): Promi
   // Search probe: JSON API availability + engine responsiveness.
   let probeBody: unknown;
   let probeError: unknown;
+  let limiterReported = false;
+  const limiterState = () =>
+    limiterOn
+      ? 'enabled — the instance rate-limits suspicious traffic'
+      : 'disabled — no rate limiting configured';
   try {
     probeBody = await probeInstanceJson(
       config,
@@ -84,10 +91,9 @@ export async function runDoctor(config: Config, opts: ClientOptions = {}): Promi
     checks.push({
       id: 'limiter',
       ok: true,
-      detail: limiterOn
-        ? 'enabled — the instance rate-limits suspicious traffic'
-        : 'disabled — no rate limiting configured',
+      detail: limiterState(),
     });
+    limiterReported = true;
   } else {
     const status = probeError instanceof SearxngError ? probeError.status : undefined;
     if (status === 403) {
@@ -108,9 +114,18 @@ export async function runDoctor(config: Config, opts: ClientOptions = {}): Promi
         ok: false,
         detail: 'rate-limited the probe (HTTP 429); requests may be throttled.',
       });
+      limiterReported = true;
     } else {
       checks.push({ id: 'json_api', ok: false, detail: describeError(probeError) });
     }
+  }
+
+  // The tool description promises limiter state: when /config answered, report
+  // it even if the search probe failed another way. The healthy path and the
+  // 429 branch carry their own limiter verdict above; without a /config answer
+  // there is nothing to report (limiterOn would just be its default).
+  if (configOk && !limiterReported) {
+    checks.push({ id: 'limiter', ok: true, detail: limiterState() });
   }
 
   return { healthy: checks.every((check) => check.ok), checks };

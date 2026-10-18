@@ -55,6 +55,8 @@ describe('registerApps', () => {
     registerApps(server);
     // Handshake per the ext-apps no-SDK pattern.
     expect(html).toContain('ui/initialize');
+    expect(html).toContain('appCapabilities');
+    expect(html).not.toContain('capabilities:');
     expect(html).toContain('ui/notifications/initialized');
     expect(html).toContain('ui/notifications/tool-result');
     expect(html).toContain('2026-01-26');

@@ -167,6 +167,27 @@ describe('SEARXNG_HTML_FALLBACK (D13)', () => {
   });
 });
 
+describe('SEARXNG_RERANK_BOOST_DOMAINS / SEARXNG_ARCHIVE_FALLBACK', () => {
+  it('splits SEARXNG_RERANK_BOOST_DOMAINS on commas, trimming entries; unset stays empty', () => {
+    expect(
+      loadConfig({ SEARXNG_RERANK_BOOST_DOMAINS: 'a.test, b.test' }, '0.0.0').rerankBoostDomains,
+    ).toEqual(['a.test', 'b.test']);
+    expect(loadConfig({}, '0.0.0').rerankBoostDomains).toEqual([]);
+  });
+
+  it('parses SEARXNG_ARCHIVE_FALLBACK booleans and warns + falls back to false on garbage', () => {
+    expect(loadConfig({ SEARXNG_ARCHIVE_FALLBACK: 'true' }, '0.0.0').archiveFallback).toBe(true);
+    expect(loadConfig({ SEARXNG_ARCHIVE_FALLBACK: '1' }, '0.0.0').archiveFallback).toBe(true);
+    expect(loadConfig({ SEARXNG_ARCHIVE_FALLBACK: 'false' }, '0.0.0').archiveFallback).toBe(false);
+    const warnings: string[] = [];
+    const cfg = loadConfig({ SEARXNG_ARCHIVE_FALLBACK: 'garbage' }, '0.0.0', (message) =>
+      warnings.push(message),
+    );
+    expect(cfg.archiveFallback).toBe(false);
+    expect(warnings.join('\n')).toMatch(/SEARXNG_ARCHIVE_FALLBACK/);
+  });
+});
+
 describe('operator defaults (D16)', () => {
   it('stays unset for an empty environment', () => {
     const cfg = loadConfig({}, '0.0.0');

@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { fetchContent } from '../src/fetch.js';
+import { asFetchLike, HTML_PAGE, makeConfig } from './helpers.js';
 import { currentTraceparent, extractTraceparent, runWithTraceContext } from '../src/otel.js';
 
 const VALID = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
@@ -38,5 +40,28 @@ describe('runWithTraceContext', () => {
     await runWithTraceContext({}, async () => {
       expect(currentTraceparent()).toBeUndefined();
     });
+  });
+});
+
+describe('traceparent propagation into outbound fetches', () => {
+  const config = makeConfig({ allowPrivateHosts: true });
+  const seenHeaders: Record<string, string>[] = [];
+  const stub = asFetchLike(async (_url: string, init?: { headers?: Record<string, string> }) => {
+    seenHeaders.push(init?.headers ?? {});
+    return new Response(HTML_PAGE, { status: 200, headers: { 'content-type': 'text/html' } });
+  });
+
+  it('forwards a valid envelope traceparent as the outbound traceparent header', async () => {
+    await runWithTraceContext({ traceparent: VALID }, () =>
+      fetchContent(config, 'https://x.test/doc', { fetchImpl: stub }),
+    );
+    expect(seenHeaders.at(-1)?.traceparent).toBe(VALID);
+  });
+
+  it('sends no traceparent header outside a trace context', async () => {
+    const before = seenHeaders.length;
+    await fetchContent(config, 'https://x.test/doc', { fetchImpl: stub });
+    expect(seenHeaders).toHaveLength(before + 1);
+    expect(seenHeaders.at(-1)?.traceparent).toBeUndefined();
   });
 });

@@ -146,7 +146,9 @@ export const SKILL_ENTRIES: SkillEntry[] = Object.entries(SKILL_SOURCES)
     const fields = parseFrontmatter(content);
     return {
       uri: skillUri(name),
-      frontmatter: { name: fields.name ?? name, description: fields.description ?? '' },
+      // Spec: frontmatter MUST be identical in content to the SKILL.md's, so
+      // every parsed field passes through — license included.
+      frontmatter: { ...fields, name: fields.name ?? name, description: fields.description ?? '' },
       resources: [
         { uri: skillUri(name), digest: sha256(content), size: Buffer.byteLength(content, 'utf8') },
       ],
@@ -181,12 +183,26 @@ export function registerSkills(server: McpServer): void {
   server.server.setRequestHandler(
     'skills/list',
     { params: z.object({}).passthrough(), result: listResult },
-    () => ({
-      resultType: 'complete' as const,
-      skills: SKILL_ENTRIES.map((entry) => ({ ...entry, frontmatter: { ...entry.frontmatter } })),
-      ttlMs: SKILLS_TTL_MS,
-      cacheScope: 'public',
-    }),
+    (params) => {
+      // The catalog is a single complete page, so any cursor cannot be honored
+      // and is invalid params (spec: bad cursor → -32602). Kept in the handler
+      // so the params schema stays permissive passthrough.
+      const { cursor } = params as { cursor?: unknown };
+      if (cursor !== undefined && cursor !== '') {
+        throw Object.assign(
+          new Error(`Invalid cursor: skills/list serves a single complete page`),
+          {
+            code: -32602,
+          },
+        );
+      }
+      return {
+        resultType: 'complete' as const,
+        skills: SKILL_ENTRIES.map((entry) => ({ ...entry, frontmatter: { ...entry.frontmatter } })),
+        ttlMs: SKILLS_TTL_MS,
+        cacheScope: 'public',
+      };
+    },
   );
 
   server.server.setRequestHandler(
@@ -195,7 +211,8 @@ export function registerSkills(server: McpServer): void {
     (params) => {
       const entry = SKILL_ENTRIES.find((candidate) => candidate.uri === params.uri);
       if (entry === undefined) {
-        throw new Error(`Unknown skill: ${params.uri}`);
+        // Spec: an unknown uri is invalid params (-32602), not an internal error.
+        throw Object.assign(new Error(`Unknown skill: ${params.uri}`), { code: -32602 });
       }
       return {
         resultType: 'complete' as const,

@@ -14,10 +14,23 @@ import type { FetchLike } from './http.js';
 const AVAILABILITY_ENDPOINT = 'https://archive.org/wayback/available';
 const AVAILABILITY_TIMEOUT_MS = 10_000;
 
+const GUARD_REFUSAL = /Refusing to fetch|private or reserved|not allowed/i;
+
+function isGuardRefusal(error: unknown, depth = 2): boolean {
+  if (depth < 0 || !(error instanceof Error)) return false;
+  if (GUARD_REFUSAL.test(error.message)) return true;
+  return isGuardRefusal(error.cause, depth - 1);
+}
+
 /** True for failures a snapshot can plausibly fix: the target is gone
  * (404/410/5xx), unreachable, or timed out. Deliberately message-based —
  * policy refusals never carry these signatures. */
 export function isDeadLinkError(error: unknown): boolean {
+  // Undici wraps a refused guarded lookup (anti-rebind window: pre-validation
+  // passed, connect-time lookup refused) in TypeError('fetch failed'), which
+  // matches the dead-link signature below; a policy refusal must not be
+  // routed through archive.org. Two cause levels cover undici's wrapping.
+  if (isGuardRefusal(error)) return false;
   if (error instanceof FetchError) {
     const status = /HTTP (\d{3})/.exec(error.message);
     if (status !== null) {

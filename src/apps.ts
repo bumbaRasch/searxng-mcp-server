@@ -124,7 +124,7 @@ const GALLERY_HTML = [
   '  });',
   "  sendRequest('ui/initialize', {",
   "    protocolVersion: '2026-01-26',",
-  '    capabilities: {},',
+  '    appCapabilities: {},',
   "    clientInfo: { name: 'searxng-gallery', version: '1.0.0' },",
   '  })',
   "    .then(function () { sendNotification('ui/notifications/initialized', {}); })",

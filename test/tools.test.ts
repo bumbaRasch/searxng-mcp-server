@@ -913,6 +913,15 @@ const noSnapshotFetch: FetchLike = async (url: string) => {
   throw new Error('ENOTFOUND');
 };
 
+const thrown = (fn: () => unknown): { code?: number; data?: unknown; message?: string } => {
+  try {
+    fn();
+  } catch (error) {
+    return error as { code?: number; data?: unknown; message?: string };
+  }
+  throw new Error('expected the handler to throw');
+};
+
 const deepFetch: FetchLike = async (url: string) => {
   if (url.includes('/search?')) {
     const pageno = Number(new URL(url).searchParams.get('pageno') ?? '1');
@@ -1065,7 +1074,7 @@ describe('deep_search and the task family', () => {
   });
 
   it('serves the task family through the custom-handler seam', () => {
-    const handlers = new Map<string, (params: unknown) => unknown>();
+    const handlers = new Map<string, (params: unknown, ctx?: unknown) => unknown>();
     const store = new TaskStore();
     const fakeServer = {
       registerTool: () => {},
@@ -1073,7 +1082,7 @@ describe('deep_search and the task family', () => {
         setRequestHandler: (
           method: string,
           _schemas: unknown,
-          handler: (params: unknown) => unknown,
+          handler: (params: unknown, ctx?: unknown) => unknown,
         ) => {
           handlers.set(method, handler);
         },
@@ -1082,17 +1091,34 @@ describe('deep_search and the task family', () => {
     registerTools(fakeServer, config, { tasks: store });
     expect([...handlers.keys()].toSorted()).toEqual(['tasks/cancel', 'tasks/get']);
 
+    const capsCtx = { mcpReq: { envelope: TASK_CAPS } };
     const record = store.create('working');
-    expect(handlers.get('tasks/get')?.({ taskId: record.taskId })).toMatchObject({
+    expect(handlers.get('tasks/get')?.({ taskId: record.taskId }, capsCtx)).toMatchObject({
       resultType: 'complete',
       status: 'working',
       statusMessage: 'working',
     });
-    expect(handlers.get('tasks/cancel')?.({ taskId: record.taskId })).toEqual({
+    expect(handlers.get('tasks/cancel')?.({ taskId: record.taskId }, capsCtx)).toEqual({
       resultType: 'complete',
     });
     expect(store.get(record.taskId)?.status).toBe('cancelled');
-    expect(() => handlers.get('tasks/get')?.({ taskId: 'unknown' })).toThrow(/Unknown task/);
-    expect(() => handlers.get('tasks/cancel')?.({ taskId: 'unknown' })).toThrow(/Unknown task/);
+
+    // A request that never declared io.modelcontextprotocol/tasks answers
+    // -32021 before any store access (the cancel below must be a no-op).
+    for (const method of ['tasks/get', 'tasks/cancel'] as const) {
+      const error = thrown(() => handlers.get(method)?.({ taskId: record.taskId }));
+      expect(error.code).toBe(-32021);
+      expect(error.data).toEqual({
+        requiredCapabilities: { extensions: { 'io.modelcontextprotocol/tasks': {} } },
+      });
+    }
+    expect(store.get(record.taskId)?.status).toBe('cancelled');
+
+    // Unknown ids answer -32602 (Invalid params), not -32603.
+    for (const method of ['tasks/get', 'tasks/cancel'] as const) {
+      const error = thrown(() => handlers.get(method)?.({ taskId: 'unknown' }, capsCtx));
+      expect(error.code).toBe(-32602);
+      expect(error.message).toMatch(/Unknown task/);
+    }
   });
 });

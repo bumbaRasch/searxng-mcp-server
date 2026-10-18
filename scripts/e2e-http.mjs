@@ -120,9 +120,10 @@ async function main() {
       discover?.ttlMs === 3_600_000 && discover?.cacheScope === 'public',
       `server/discover carries the cache hint (ttlMs=${String(discover?.ttlMs)}, scope=${String(discover?.cacheScope)})`,
     );
+    const discoverMeta = discover ? discover['_meta'] : undefined;
     assert(
-      discover?._meta?.['io.modelcontextprotocol/serverInfo']?.name === 'searxng-mcp-server',
-      'server/discover carries serverInfo', // eslint-disable-line no-underscore-dangle
+      discoverMeta?.['io.modelcontextprotocol/serverInfo']?.name === 'searxng-mcp-server',
+      'server/discover carries serverInfo',
     );
     const listMeta = await client.request(
       { method: 'tools/list', params: {} },

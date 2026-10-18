@@ -77,6 +77,34 @@ describe('TaskStore', () => {
     expect(store.get(first.taskId)).toBeUndefined();
   });
 
+  it('evicts a finished task in favor of a working one', () => {
+    const store = new TaskStore(600_000, 500, 2);
+    const working = store.create('w');
+    const done = store.create('d');
+    store.complete(done.taskId, { content: [] });
+    store.create('3');
+    expect(store.get(working.taskId)?.status).toBe('working');
+    expect(store.get(done.taskId)).toBeUndefined();
+    expect(store.signalFor(done.taskId)).toBeUndefined();
+  });
+
+  it('leaves no controller behind after TTL expiry and prune', () => {
+    let now = 1_000_000;
+    const store = new TaskStore(600_000, 500, 64, () => now);
+    // get() expiry path drops the controller together with the record.
+    const viaGet = store.create('get-path');
+    now += 600_001;
+    expect(store.get(viaGet.taskId)).toBeUndefined();
+    expect(store.signalFor(viaGet.taskId)).toBeUndefined();
+    // prune() path (during create): the stale record is swept without ever
+    // being get()ed, and its signal is gone too.
+    const viaPrune = store.create('prune-path');
+    now += 600_001;
+    store.create('fresh');
+    expect(store.signalFor(viaPrune.taskId)).toBeUndefined();
+    expect(store.get(viaPrune.taskId)).toBeUndefined();
+  });
+
   it('rejects unknown task ids on every operation', () => {
     const store = new TaskStore();
     expect(store.get('nope')).toBeUndefined();

@@ -27,7 +27,8 @@ export interface TaskRecord {
 
 const DEFAULT_TTL_MS = 600_000;
 const DEFAULT_POLL_INTERVAL_MS = 500;
-/** Store bound: oldest finished tasks are evicted beyond it. */
+/** Store bound: beyond it, finished tasks are evicted oldest-first; working
+ * tasks are only evicted when the store would otherwise refuse creation. */
 const MAX_TASKS = 64;
 
 const TERMINAL: readonly TaskStatus[] = ['completed', 'cancelled', 'failed'];
@@ -42,6 +43,13 @@ export class TaskStore {
     private readonly maxTasks: number = MAX_TASKS,
     private readonly now: () => number = Date.now,
   ) {}
+
+  /** Drops a task from both maps — every removal path must go through this,
+   * or the AbortController leaks. */
+  private drop(taskId: string): void {
+    this.entries.delete(taskId);
+    this.controllers.delete(taskId);
+  }
 
   /** Creates a working task; the record is findable before CreateTaskResult
    * is sent (spec: no speculative polling). Returns the seeded Task shape. */
@@ -58,8 +66,11 @@ export class TaskStore {
       pollIntervalMs: this.defaultPollIntervalMs,
     };
     if (this.entries.size >= this.maxTasks) {
-      const oldest = this.entries.keys().next();
-      if (!oldest.done) this.entries.delete(oldest.value);
+      // Prefer evicting a finished task; a full store of working tasks is
+      // pathological, and there the bound wins over the in-flight task.
+      const finished = [...this.entries].find(([, value]) => TERMINAL.includes(value.status));
+      const victim = finished !== undefined ? finished[0] : this.entries.keys().next().value;
+      if (victim !== undefined) this.drop(victim);
     }
     this.entries.set(record.taskId, record);
     this.controllers.set(record.taskId, new AbortController());
@@ -80,7 +91,7 @@ export class TaskStore {
       this.now() >= Date.parse(record.createdAt) + record.ttlMs &&
       !TERMINAL.includes(record.status)
     ) {
-      this.entries.delete(taskId);
+      this.drop(taskId);
       return undefined;
     }
     return { ...record };
@@ -142,7 +153,7 @@ export class TaskStore {
         record.ttlMs !== null &&
         now >= Date.parse(record.createdAt) + record.ttlMs
       ) {
-        this.entries.delete(taskId);
+        this.drop(taskId);
       }
     }
   }

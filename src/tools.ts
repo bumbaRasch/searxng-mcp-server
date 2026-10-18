@@ -651,6 +651,23 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
   registerTaskHandlers(server, effectiveDeps);
 }
 
+/** Spec-blessed JSON-RPC error: the SDK honors a numeric `code` (plus
+ * `data`) on the thrown value; a bare Error answers -32603. */
+const specError = (code: number, message: string, data?: unknown): Error =>
+  Object.assign(new Error(message), { code, ...(data !== undefined ? { data } : {}) });
+
+/** Per-request capability gate (spec: servers MUST answer -32021 to a
+ * tasks/get, tasks/update or tasks/cancel whose _meta envelope does not
+ * declare io.modelcontextprotocol/tasks). */
+const requireTasksCapability = (ctx: { mcpReq?: { envelope?: unknown } } | undefined): void => {
+  if (declaresTasksCapability(ctx?.mcpReq?.envelope)) return;
+  throw specError(-32021, 'Missing io.modelcontextprotocol/tasks client capability', {
+    requiredCapabilities: { extensions: { 'io.modelcontextprotocol/tasks': {} } },
+  });
+};
+
+const unknownTask = (taskId: string): Error => specError(-32602, `Unknown task: ${taskId}`);
+
 /** Serving seam for the task family (Stage 4): the SDK keeps only
  * tasks/get and tasks/cancel on the 2026-07-28 wire, served through
  * explicit-schema custom handlers. Unknown task ids error; there is no
@@ -664,10 +681,11 @@ function registerTaskHandlers(server: McpServer, deps: ToolDeps): void {
   server.server.setRequestHandler(
     'tasks/get',
     { params: taskParams, result: taskResult },
-    (params) => {
+    (params, ctx) => {
+      requireTasksCapability(ctx);
       const record = store.get(params.taskId);
       if (record === undefined) {
-        throw new Error(`Unknown task: ${params.taskId}`);
+        throw unknownTask(params.taskId);
       }
       const task: TaskHandlerResult = {
         resultType: 'complete',
@@ -688,9 +706,10 @@ function registerTaskHandlers(server: McpServer, deps: ToolDeps): void {
   server.server.setRequestHandler(
     'tasks/cancel',
     { params: taskParams, result: taskResult },
-    (params) => {
+    (params, ctx) => {
+      requireTasksCapability(ctx);
       if (!store.cancel(params.taskId)) {
-        throw new Error(`Unknown task: ${params.taskId}`);
+        throw unknownTask(params.taskId);
       }
       return { resultType: 'complete' as const };
     },
