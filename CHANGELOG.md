@@ -46,6 +46,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Dependency and stack sync (2026-10-22): undici 8.12.3, unpdf 1.9.1,
+  zod 4.6.7, linkedom 0.18.14, oxlint 1.89.0, oxlint-tsgolint 7.0.2004,
+  prettier 3.9.10, vitest 5.0.5, @types/node 26.6.5, pnpm 12.15.0. The e2e
+  CI job moves to Node 24.22.1 and the bundled SearXNG image to
+  `2026.10.19-81371861f` (both e2e suites re-run green against it); the SDK
+  stays at 2.3.1 — the current npm latest, so no wire re-verification is
+  due. Also recorded upstream: ext-tasks overview #35 (2026-10-20) aligned
+  the documented missing-capability error to `-32021`, which is what the
+  server already answers (`docs/extending.md` reconciliation log).
 - Internal refactor: `src/schemas.ts` split into `src/schemas/` — eight
   per-consumer zod modules with no barrel (`search`, `fetch`,
   `search-and-fetch`, `mappers`, `doctor`, `list-engines`, `crawl`,

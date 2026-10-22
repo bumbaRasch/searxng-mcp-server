@@ -21,7 +21,7 @@
     "readability",
     "privacy"
   ],
-  "packageManager": "pnpm@12.11.2",
+  "packageManager": "pnpm@12.15.0",
   "engines": {
     "node": ">=22.19.0"
   },
@@ -57,21 +57,21 @@
     "@modelcontextprotocol/node": "^2.0.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "@mozilla/readability": "^0.6.0",
-    "linkedom": "^0.18.13",
+    "linkedom": "^0.18.14",
     "turndown": "^7.2.4",
-    "undici": "^8.10.2",
-    "unpdf": "^1.8.1",
-    "zod": "^4.6.5"
+    "undici": "^8.12.3",
+    "unpdf": "^1.9.1",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "^2.0.0",
-    "@types/node": "^26.6.2",
+    "@types/node": "^26.6.5",
     "@types/turndown": "^5.0.6",
-    "@vitest/coverage-v8": "^5.0.1",
-    "oxlint": "^1.83.0",
-    "oxlint-tsgolint": "^7.0.2002",
-    "prettier": "^3.9.8",
+    "@vitest/coverage-v8": "^5.0.5",
+    "oxlint": "^1.89.0",
+    "oxlint-tsgolint": "^7.0.2004",
+    "prettier": "^3.9.10",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.1"
+    "vitest": "^5.0.5"
   }
 }
