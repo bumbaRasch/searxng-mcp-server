@@ -66,5 +66,10 @@ Policy:
   "verified against SDK v2.3.1". An SDK bump means re-checking every such
   comment-marked place before merging.
 
+Reconciliation log: ext-tasks overview PR #35 (2026-10-20) fixed the
+documented missing-client-capability error in the overview from `-32003` to
+`-32021` — the code our gate already answers (`src/tasks.ts`); no wire
+change on our side.
+
 Definition of done: `pnpm lint && pnpm lint:types && pnpm typecheck && pnpm test`
 and the `registerTools` test (which asserts `TOOL_NAMES` parity) is green.
