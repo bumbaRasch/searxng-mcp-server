@@ -21,7 +21,7 @@
     "readability",
     "privacy"
   ],
-  "packageManager": "pnpm@12.15.0",
+  "packageManager": "pnpm@12.17.0",
   "engines": {
     "node": ">=22.19.0"
   },
