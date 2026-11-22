@@ -85,7 +85,7 @@ describe('toImageSearchParams', () => {
     );
     expect(params).toEqual({
       query: 'cats',
-      categories: ['images'],
+      categories: ['images', 'stock images'],
       language: 'de',
       pageno: 2,
       safesearch: 1,

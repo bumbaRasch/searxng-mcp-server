@@ -468,7 +468,7 @@ describe('image/music time_range parity', () => {
       musicSearchInput.parse({ query: 'nirvana', time_range: 'week' }),
       { fetchImpl },
     );
-    expect(seen[0]).toContain('categories=images');
+    expect(seen[0]).toContain('categories=images%2Cstock+images');
     expect(seen[0]).toContain('time_range=month');
     expect(seen[1]).toContain('categories=music');
     expect(seen[1]).toContain('time_range=week');

@@ -53,6 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (Wikimedia User-Agent policy), and `docker-compose.yml` refuses to start
   without it. See `.env.example` and the README quick start.
 - SearXNG image bumped to `2026.11.21-c6ee3e9fd`.
+- `image_search` also queries SearXNG's `stock images` category (Pexels,
+  Unsplash, 500px, StockSnap, …), split out of `images` upstream in 2026-09.
 - Docs: the `engines` query parameter is undocumented upstream since #6346
   ("no longer supported") but still parsed; the `engines` tool argument depends
   on it, so it is re-verified on each image bump (`docs/design.md`).

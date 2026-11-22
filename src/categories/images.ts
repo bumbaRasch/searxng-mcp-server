@@ -76,7 +76,7 @@ export const imageCategory = defineCategory({
     description:
       'Search the web for images. Returns direct image links, thumbnails, resolution, file size and formats. Supports a time_range freshness filter.',
   },
-  upstream: { categories: ['images'], supportsTimeRange: true },
+  upstream: { categories: ['images', 'stock images'], supportsTimeRange: true },
   heading: 'Image',
   resultSchema,
   projectResult,
