@@ -859,6 +859,20 @@ describe('citation refs', () => {
   });
 });
 
+const pageFetch: FetchLike = async (url: string) => {
+  const q = new URL(url).searchParams.get('q') ?? '';
+  return jsonResponse({
+    query: q,
+    results: [
+      { title: 'a', url: 'https://r.test/1', content: '' },
+      { title: 'b', url: 'https://r.test/2', content: '' },
+      { title: 'c', url: 'https://r.test/3', content: '' },
+      { title: 'd', url: 'https://r.test/4', content: '' },
+      { title: `${q} runtime`, url: 'https://r.test/5', content: '', score: 0.1 },
+    ],
+  });
+};
+
 describe('rerank wiring', () => {
   it('search with rerank reorders delivered results by the heuristic', async () => {
     const result = await handleSearch(
@@ -876,6 +890,49 @@ describe('rerank wiring', () => {
     });
     const structured = searchOutput.parse(result.structuredContent);
     expect(structured.results[0]?.title).toBe('first upstream');
+  });
+
+  it('rerank sees the whole page before slicing to max_results', async () => {
+    const result = await handleSearch(
+      config,
+      searchInput.parse({ query: 'rust async', rerank: true, max_results: 1 }),
+      { fetchImpl: pageFetch },
+    );
+    const structured = searchOutput.parse(result.structuredContent);
+    expect(structured.results.map((r) => r.url)).toEqual(['https://r.test/5']);
+  });
+
+  it('min_score still drops a high-overlap scored item under rerank', async () => {
+    const result = await handleSearch(
+      config,
+      searchInput.parse({ query: 'rust async', rerank: true, max_results: 1, min_score: 0.5 }),
+      { fetchImpl: pageFetch },
+    );
+    const structured = searchOutput.parse(result.structuredContent);
+    expect(structured.results.map((r) => r.url)).toEqual(['https://r.test/1']);
+  });
+
+  it('mints refs only for delivered results', async () => {
+    const refs = new RefRegistry();
+    await handleSearch(
+      config,
+      searchInput.parse({ query: 'rust async', rerank: true, max_results: 1 }),
+      { fetchImpl: pageFetch, refs },
+    );
+    expect(refs.assign('https://r.test/1')).toBe(2);
+  });
+
+  it('batch queries rerank per query', async () => {
+    const result = await handleSearch(
+      config,
+      searchInput.parse({ queries: ['rust async', 'go net'], rerank: true, max_results: 1 }),
+      { fetchImpl: pageFetch },
+    );
+    const sc = result.structuredContent as { batch: { results: { title: string }[] }[] };
+    expect(sc.batch.map((b) => b.results[0]?.title)).toEqual([
+      'rust async runtime',
+      'go net runtime',
+    ]);
   });
 
   it('handleDoctor returns a structured report', async () => {

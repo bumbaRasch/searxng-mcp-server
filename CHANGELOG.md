@@ -47,6 +47,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`rerank: true` ranks the full page** — `search`, `search_and_fetch`,
+  `deep_search` (and batch `queries`) now rerank the whole result page before
+  the `max_results` cut, so better-matching results further down the page can
+  surface. Previously rerank only reordered results already cut to
+  `max_results`. Order: `min_score` → rerank → slice → citation refs for
+  delivered results. Matches how `code_search` already ranks. Output without
+  `rerank` is unchanged.
 - **Breaking for self-hosters**: add `SEARXNG_CONTACT_URL` to `.env` (a
   `mailto:` address or contact page of the instance operator). Since SearXNG
   2026.11 (upstream [#6870](https://github.com/searxng/searxng/pull/6870)) the

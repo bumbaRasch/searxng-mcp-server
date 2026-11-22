@@ -406,16 +406,21 @@ export async function search(
       );
     });
   }
-  const response = mapSearchResponse(raw, effective.maxResults, effective.minScore);
-  const reranked =
-    effective.rerank === true
-      ? {
-          ...response,
-          results: rerankResults(effective.query, response.results, {
-            boostDomains: config.rerankBoostDomains,
-          }),
-        }
-      : response;
+  // Rerank sees the whole projected page (post min_score), then cut to maxResults.
+  const rerank = effective.rerank === true;
+  const response = mapSearchResponse(
+    raw,
+    rerank ? Number.POSITIVE_INFINITY : effective.maxResults,
+    effective.minScore,
+  );
+  const reranked = rerank
+    ? {
+        ...response,
+        results: rerankResults(effective.query, response.results, {
+          boostDomains: config.rerankBoostDomains,
+        }).slice(0, Math.max(0, effective.maxResults)),
+      }
+    : response;
   return opts.refs === undefined ? reranked : withRefs(opts.refs, reranked);
 }
 

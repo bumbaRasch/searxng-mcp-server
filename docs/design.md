@@ -8,7 +8,8 @@ tools:
 - `search` — query SearXNG and return structured + human-readable results
   (a single query or a 2–5 query batch). Results carry session-stable
   citation refs; `rerank: true` applies a heuristic reorder (query/title
-  overlap, freshness, domain boosts) on top of the instance ranking.
+  overlap, freshness, domain boosts) to the whole page, before the cut
+  (order in the category section below).
 - `image_search` — find images: direct file links, optional thumbnails,
   resolution, format and file size. `_meta.ui` links to the MCP Apps gallery.
 - `news_search` — find recent news articles with a freshness filter.
@@ -132,6 +133,10 @@ leaks the string `'None'` for missing dates) and durations through
 A category may also declare an optional `rank(query, results, { boostDomains })`
 hook; when set, `runCategorySearch` projects the whole page, ranks it, and only
 then slices to `max_results` (`code_search` uses it to reuse `src/rerank.ts`).
+The shared order for ranked results is min_score → rerank → `max_results`
+slice → citation refs minted for delivered results only. `search` (and
+`search_and_fetch`, batch `queries`, `deep_search`) ranks the whole page the
+same way; before this, rerank only reordered the already-cut results.
 
 Instance-bound requests (search family, `autocomplete`, `/config`) ride a
 failover client: with `SEARXNG_URLS` set, network errors, timeouts, 5xx, 429
@@ -182,7 +187,7 @@ to the pre-aggregation output.
 | `src/icon.ts` | MCP `icons` metadata (self-contained data URIs) for the server and every tool |
 | `src/version.ts` | `VERSION` constant (kept in sync with package.json by a test) |
 | `src/refs.ts` | citation ref registry (Stage 1): bounded, monotonic, process-scope URL↔ref map; `sharedRefs` singleton |
-| `src/rerank.ts` | heuristic rerank (Stage 2): pure scoring (query/title overlap, freshness decay, domain boosts), stable ties |
+| `src/rerank.ts` | heuristic rerank (Stage 2): pure scoring (query/title overlap, freshness decay, domain boosts), stable ties; applied to the whole page before the `max_results` slice |
 | `src/doctor.ts` | instance doctor (Stage 2): primary-instance probes (JSON API, `/config`, unresponsive engines, limiter) into structured checks |
 | `src/observability.ts` | `config://searxng` and `stats://engines/errors` resources (Stage 2), defensively projected |
 | `src/crawl.ts` | `crawl_site` (Stage 3): BFS over guarded fetches, robots prefix matching, bounded `PageStore` (`sharedPages`) |
