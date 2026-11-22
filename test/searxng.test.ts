@@ -593,7 +593,7 @@ describe('imageSearch/newsSearch clients', () => {
       toImageSearchParams(imageSearchInput.parse({ query: 'cats' })),
       { fetchImpl },
     );
-    expect(seen[0]).toContain('categories=images');
+    expect(seen[0]).toContain('categories=images%2Cstock+images');
     expect(res.results[0]?.imgSrc).toBe('https://i.test/c.png');
 
     const newsRes = await newsSearch(
