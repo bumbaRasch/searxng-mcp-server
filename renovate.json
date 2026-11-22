@@ -7,6 +7,11 @@
   ],
   "packageRules": [
     {
+      "matchPackageNames": ["oxlint", "oxlint-tsgolint"],
+      "groupName": "oxlint",
+      "description": "oxlint and oxlint-tsgolint must move together: a new oxlint panics with 'unknown rule' under --type-aware when paired with an older tsgolint."
+    },
+    {
       "matchDatasources": ["docker"],
       "matchPackageNames": ["docker.io/searxng/searxng"],
       "description": "SearXNG tags are date-sha pairs (2026.10.13-22c64b8d3): compare the date, treat the sha as compatibility.",

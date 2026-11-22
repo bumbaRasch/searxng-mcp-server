@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Release workflow can be re-run** — `release.yml` skips `npm publish` when the version is already on npm, waits up to 10 min for npm to make the new version visible before publishing to the MCP Registry (v1.1.0 failed because the registry step ran too early), and skips creating the GitHub Release when one already exists.
+- **Renovate groups `oxlint` with `oxlint-tsgolint`** — both are bumped in one PR, since a new oxlint can enable rules only the matching tsgolint knows (oxlint 1.94.0 with tsgolint 7.0.2004 panicked with "unknown rule"). Now at oxlint 1.94.0 / oxlint-tsgolint 7.0.2007.
+
 ## [1.1.0] - 2026-11-22
 
 ### Added

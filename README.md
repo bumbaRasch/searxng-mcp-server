@@ -239,6 +239,8 @@ node scripts/e2e.mjs      # end-to-end over stdio against the local SearXNG stac
 node scripts/e2e-http.mjs # same over the Streamable HTTP transport
 ```
 
+A failed release job can be re-run from the Actions tab; its npm publish and GitHub Release steps are skipped when already done.
+
 Architecture and security rationale live in [`docs/design.md`](docs/design.md); adding a search category: the checklist in [docs/extending.md](docs/extending.md). PRs are welcome — run the Development gate before submitting. Maintainer: [@bumbaRasch](https://github.com/bumbaRasch).
 
 ## License

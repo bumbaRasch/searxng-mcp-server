@@ -54,8 +54,7 @@ function parseResult(article: HtmlElement): ParsedHtmlResult | undefined {
  * Malformed/dirty items are dropped defensively; output is capped at MAX_HTML_RESULTS. */
 export function parseSearchResultsHtml(html: string, query: string): ParsedHtmlPayload {
   const { document } = parseHTML(html);
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-  const articles = Array.from(document.querySelectorAll('article.result')) as HtmlElement[];
+  const articles = Array.from<HtmlElement>(document.querySelectorAll('article.result'));
   const results: ParsedHtmlResult[] = [];
   for (const article of articles) {
     if (results.length >= MAX_HTML_RESULTS) break;
