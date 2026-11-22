@@ -13,6 +13,7 @@ import {
   mapEnginesResponse,
   probeInstanceJson,
   SearxngError,
+  timeoutLimitSeconds,
   type ClientOptions,
 } from './searxng.js';
 
@@ -65,7 +66,7 @@ export async function runDoctor(config: Config, opts: ClientOptions = {}): Promi
   try {
     probeBody = await probeInstanceJson(
       config,
-      `/search?q=${encodeURIComponent(PROBE_QUERY)}&format=json`,
+      `/search?q=${encodeURIComponent(PROBE_QUERY)}&format=json&timeout_limit=${timeoutLimitSeconds(config.searxngTimeoutMs)}`,
       opts,
     );
   } catch (error) {
