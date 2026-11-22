@@ -2,7 +2,7 @@
 
 `searxng-mcp-server` is a Model Context Protocol (MCP) server, written in
 TypeScript, that exposes a self-hosted [SearXNG](https://github.com/searxng/searxng)
-instance to MCP clients (OpenCode, Claude, Cursor, …). It provides thirteen
+instance to MCP clients (OpenCode, Claude, Cursor, …). It provides fourteen
 tools:
 
 - `search` — query SearXNG and return structured + human-readable results
@@ -18,6 +18,9 @@ tools:
 - `paper_search` — find scientific publications: abstracts, authors,
   journal/DOI metadata and direct PDF links.
 - `fetch_content` — fetch a URL or a citation ref (`ref:N`) and return clean
+- `code_search` — code repositories, packages and container images, developer
+  docs and programming Q&A (SearXNG `it` and `q&a` categories), always reranked
+  by query relevance before the `max_results` slice.
   Markdown for LLM consumption, with `outline`/`section` reading controls
   (D14), offset continuation for long pages, and an opt-in Wayback fallback
   for dead links.
@@ -109,8 +112,8 @@ aging matters. SearXNG aggregates upstream search engines; `fetch_content`
 retrieves and extracts a single page (or serves a crawled one from the
 store).
 
-Thirteen tools are exposed. The category tools — `search`, `image_search`,
-`news_search`, `video_search`, `music_search`, `paper_search` —
+Fourteen tools are exposed. The category tools — `search`, `image_search`,
+`news_search`, `video_search`, `music_search`, `paper_search`, `code_search` —
 are generated from a declarative **category registry** (`src/categories/`):
 one `defineCategory` declaration per category — tool metadata, upstream
 categories, a `supportsTimeRange` flag, a result zod schema, a defensive
@@ -126,6 +129,9 @@ media — only URL strings (`thumbnailSrc`/`audioSrc`/`iframeSrc` are hooks for
 future embedded previews). Dates pass through `pickPublishedDate` (SearXNG
 leaks the string `'None'` for missing dates) and durations through
 `normalizeDuration` (numeric seconds are normalized to `M:SS`/`H:MM:SS`).
+A category may also declare an optional `rank(query, results, { boostDomains })`
+hook; when set, `runCategorySearch` projects the whole page, ranks it, and only
+then slices to `max_results` (`code_search` uses it to reuse `src/rerank.ts`).
 
 Instance-bound requests (search family, `autocomplete`, `/config`) ride a
 failover client: with `SEARXNG_URLS` set, network errors, timeouts, 5xx, 429

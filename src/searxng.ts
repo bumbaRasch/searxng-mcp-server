@@ -441,7 +441,14 @@ export async function runCategorySearch<R>(
 ): Promise<CategoryEnvelope<R>> {
   const effective = applyOperatorDefaults(config, params);
   const raw = await fetchSearchJson(config, effective, opts);
-  return buildCategoryEnvelope(raw, effective.maxResults, definition.projectResult);
+  if (definition.rank === undefined) {
+    return buildCategoryEnvelope(raw, effective.maxResults, definition.projectResult);
+  }
+  const envelope = buildCategoryEnvelope(raw, Number.POSITIVE_INFINITY, definition.projectResult);
+  const ranked = definition.rank(effective.query, envelope.results, {
+    boostDomains: config.rerankBoostDomains,
+  });
+  return { ...envelope, results: ranked.slice(0, Math.max(0, effective.maxResults)) };
 }
 
 export function mapImageResponse(raw: unknown, maxResults: number): ImageSearchResponse {

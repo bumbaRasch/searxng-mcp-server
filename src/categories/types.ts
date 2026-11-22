@@ -36,6 +36,9 @@ export interface CategoryDeclaration<R, Time extends boolean = boolean> {
   projectResult(this: void, raw: unknown): R | undefined;
   /** Per-result markdown lines, rendered inside the untrusted wrapper. */
   renderResultLines(this: void, result: R): string[];
+  /** Optional reorder of the whole projected page, applied before the max_results slice
+   * (for categories whose upstream ranking is poor, e.g. code). */
+  rank?(this: void, query: string, results: R[], opts: { boostDomains: string[] }): R[];
 }
 
 /** A registered category: the declaration plus its generated output schema. */

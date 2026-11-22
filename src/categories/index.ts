@@ -7,7 +7,9 @@ export * from './news.js';
 export * from './videos.js';
 export * from './music.js';
 export * from './paper.js';
+export * from './code.js';
 
+import { codeCategory } from './code.js';
 import { generalCategory } from './general.js';
 import { imageCategory } from './images.js';
 import { musicCategory } from './music.js';
@@ -23,4 +25,5 @@ export const categoryDefinitions = [
   videoCategory,
   musicCategory,
   paperCategory,
+  codeCategory,
 ];

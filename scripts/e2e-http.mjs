@@ -235,6 +235,17 @@ async function main() {
       `paper_search returns results over HTTP (got ${papers.structuredContent?.results?.length ?? 0})`,
     );
 
+    const code = await retryToolCall('code_search', () =>
+      client.callTool({
+        name: 'code_search',
+        arguments: { query: 'fastapi', max_results: 5, engines: ['github'] },
+      }),
+    );
+    assert(
+      !code.isError && typeof code.structuredContent?.results?.[0]?.packageName === 'string',
+      `code_search returns package results over HTTP (got ${code.structuredContent?.results?.length ?? 0})`,
+    );
+
     // v0.5.0 reading controls (D14) over Streamable HTTP: outline + section
     // round-trip on a real page.
     const OUTLINE_URL = 'https://en.wikipedia.org/wiki/Web_crawler';

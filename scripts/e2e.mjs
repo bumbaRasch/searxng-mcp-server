@@ -684,6 +684,24 @@ async function main() {
     );
     console.log(`   first paper: ${paperStructured.results[0].title}`);
 
+    // 4f'. code_search: github only keeps it deterministic; reranked page → package fields
+    const codeCall = await callWithRetry(serverProcess, 'code_search', {
+      query: 'fastapi',
+      max_results: 5,
+      engines: ['github'],
+    });
+    assert(!codeCall.error && !codeCall.result?.isError, 'code_search call succeeds');
+    const codeResults = codeCall.result?.structuredContent?.results;
+    assert(
+      Array.isArray(codeResults) && codeResults.length > 0,
+      `code_search returns results (got ${codeResults?.length ?? 0})`,
+    );
+    assert(
+      typeof codeResults[0].url === 'string' && typeof codeResults[0].packageName === 'string',
+      'code_search results carry url and packageName',
+    );
+    console.log(`   first code result: ${codeResults[0].title}`);
+
     // 4g. autocomplete for a common prefix (empty suggestions are valid)
     const autocompleteCall = await request(serverProcess, 'tools/call', {
       name: 'autocomplete',
