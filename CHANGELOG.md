@@ -46,6 +46,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking for self-hosters**: add `SEARXNG_CONTACT_URL` to `.env` (a
+  `mailto:` address or contact page of the instance operator). Since SearXNG
+  2026.11 (upstream [#6870](https://github.com/searxng/searxng/pull/6870)) the
+  Wikipedia, Wikidata and OpenStreetMap engines disable themselves without it
+  (Wikimedia User-Agent policy), and `docker-compose.yml` refuses to start
+  without it. See `.env.example` and the README quick start.
+- SearXNG image bumped to `2026.11.21-c6ee3e9fd`.
+- Docs: the `engines` query parameter is undocumented upstream since #6346
+  ("no longer supported") but still parsed; the `engines` tool argument depends
+  on it, so it is re-verified on each image bump (`docs/design.md`).
 - Dependency and stack sync (2026-10-22): undici 8.12.3, unpdf 1.9.1,
   zod 4.6.7, linkedom 0.18.14, oxlint 1.89.0, oxlint-tsgolint 7.0.2004,
   prettier 3.9.10, vitest 5.0.5, @types/node 26.6.5, pnpm 12.15.0. The e2e

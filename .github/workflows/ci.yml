@@ -74,6 +74,7 @@ jobs:
       - run: pnpm build
       # docker-compose.yml requires SEARXNG_SECRET from a .env file.
       - run: printf 'SEARXNG_SECRET=%s\n' "$(openssl rand -hex 32)" > .env
+      - run: printf 'SEARXNG_CONTACT_URL=https://github.com/${{ github.repository }}/issues\n' >> .env
       - run: docker compose up -d
       - name: Wait for the SearXNG JSON API
         run: |
