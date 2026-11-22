@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   applyOperatorDefaults,
   buildSearchParams,
+  timeoutLimitSeconds,
   imageSearch,
   mapImageResponse,
   mapMusicResponse,
@@ -39,9 +40,35 @@ import {
   type VideoSearchResponse,
 } from '../src/categories/schemas.js';
 import { asFetchLike, jsonResponse, makeConfig } from './helpers.js';
+import { autocomplete } from '../src/autocompleter.js';
 import type { FetchLike } from '../src/http.js';
 import { TtlCache } from '../src/cache.js';
 import { generalCategory } from '../src/categories/general.js';
+
+describe('timeout_limit', () => {
+  it('is 80% of the timeout in whole seconds, floored at 1', () => {
+    expect(timeoutLimitSeconds(10_000)).toBe('8');
+    expect(timeoutLimitSeconds(2500)).toBe('2');
+    expect(timeoutLimitSeconds(1000)).toBe('1');
+    expect(timeoutLimitSeconds(10)).toBe('1');
+  });
+
+  it('is sent on search and category requests, not on the autocompleter', async () => {
+    const urls: string[] = [];
+    const fetchImpl = asFetchLike(async (url: string) => {
+      urls.push(url);
+      return jsonResponse({ results: [] });
+    });
+    const cfg = makeConfig({ searxngTimeoutMs: 10_000 });
+    await search(cfg, { query: 'q', maxResults: 3 }, { fetchImpl });
+    await runCategorySearch(generalCategory, cfg, { query: 'q2', maxResults: 3 }, { fetchImpl });
+    expect(urls).toHaveLength(2);
+    for (const u of urls) expect(new URL(u).searchParams.get('timeout_limit')).toBe('8');
+    urls.length = 0;
+    await autocomplete(cfg, 'q', { fetchImpl });
+    expect(urls[0]).not.toContain('timeout_limit');
+  });
+});
 
 describe('buildSearchParams', () => {
   it('always sets q and format=json', () => {
@@ -914,7 +941,7 @@ describe('HTML fallback (D13)', () => {
     const res = await search(fallbackConfig, params, { fetchImpl });
     expect(calls).toHaveLength(2);
     expect(calls[0]).toContain('format=json');
-    expect(calls[1]).toBe('http://searx.test:8888/search?q=q');
+    expect(calls[1]).toBe('http://searx.test:8888/search?q=q&timeout_limit=1');
     expect(res.results.map((result) => result.title)).toEqual([
       'First & foremost result',
       'Second result',
@@ -1004,9 +1031,9 @@ describe('HTML fallback (D13)', () => {
     const fetchImpl = urlSequenceFetch(calls);
     const res = await search(failover, params, { fetchImpl });
     expect(calls).toEqual([
-      'http://searx.test:8888/search?q=q&format=json',
-      'http://backup.test:8888/search?q=q&format=json',
-      'http://searx.test:8888/search?q=q',
+      'http://searx.test:8888/search?q=q&format=json&timeout_limit=1',
+      'http://backup.test:8888/search?q=q&format=json&timeout_limit=1',
+      'http://searx.test:8888/search?q=q&timeout_limit=1',
     ]);
     expect(res.results).toHaveLength(4);
   });
@@ -1397,8 +1424,8 @@ describe('instance failover (B6)', () => {
     });
     const res = await search(failoverConfig, params, { fetchImpl });
     expect(seen).toEqual([
-      'http://searx.test:8888/search?q=q&format=json',
-      'http://backup.test:8888/search?q=q&format=json',
+      'http://searx.test:8888/search?q=q&format=json&timeout_limit=1',
+      'http://backup.test:8888/search?q=q&format=json&timeout_limit=1',
     ]);
     expect(res.results[0]?.title).toBe('B');
   });

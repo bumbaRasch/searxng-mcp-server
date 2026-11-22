@@ -73,7 +73,13 @@ export class SearxngError extends Error {
   }
 }
 
-export function buildSearchParams(params: SearchParams): URLSearchParams {
+/** SearXNG waits for its slowest engine; ask it to stop at 80% of our abort
+ * timeout so partial results arrive before we give up (whole seconds, min 1). */
+export function timeoutLimitSeconds(timeoutMs: number): string {
+  return String(Math.max(1, Math.floor((timeoutMs * 0.8) / 1000)));
+}
+
+export function buildSearchParams(params: SearchParams, timeoutMs?: number): URLSearchParams {
   const qs = new URLSearchParams();
   qs.set('q', params.query);
   qs.set('format', 'json');
@@ -83,6 +89,7 @@ export function buildSearchParams(params: SearchParams): URLSearchParams {
   if (params.timeRange) qs.set('time_range', params.timeRange);
   if (params.pageno !== undefined) qs.set('pageno', String(params.pageno));
   if (params.safesearch !== undefined) qs.set('safesearch', String(params.safesearch));
+  if (timeoutMs !== undefined) qs.set('timeout_limit', timeoutLimitSeconds(timeoutMs));
   return qs;
 }
 
@@ -163,8 +170,8 @@ function origin(url: string): string {
   }
 }
 
-function searchUrl(base: string, params: SearchParams): string {
-  return `${base}/search?${buildSearchParams(params).toString()}`;
+function searchUrl(base: string, params: SearchParams, timeoutMs: number): string {
+  return `${base}/search?${buildSearchParams(params, timeoutMs).toString()}`;
 }
 
 export type ExplainStatus = (status: number, base: string) => string;
@@ -304,13 +311,17 @@ export async function fetchWithFailover(
 async function fetchSearchJson(config: Config, params: SearchParams, opts: ClientOptions = {}) {
   // No SSRF guard by design: SEARXNG_URL is operator-trusted config; redirects
   // are refused so a compromised instance cannot pivot us onto internal hosts.
-  return cached(opts.cache, 'GET', searchUrl(config.searxngUrl, params), () =>
-    fetchWithFailover(config, (base) => searchUrl(base, params), {
-      fetchImpl: opts.fetchImpl,
-      explainStatus: SEARCH_EXPLAIN,
-      explainBadJson:
-        'SearXNG returned a non-JSON response. Ensure format=json is enabled in settings.yml.',
-    }),
+  return cached(
+    opts.cache,
+    'GET',
+    searchUrl(config.searxngUrl, params, config.searxngTimeoutMs),
+    () =>
+      fetchWithFailover(config, (base) => searchUrl(base, params, config.searxngTimeoutMs), {
+        fetchImpl: opts.fetchImpl,
+        explainStatus: SEARCH_EXPLAIN,
+        explainBadJson:
+          'SearXNG returned a non-JSON response. Ensure format=json is enabled in settings.yml.',
+      }),
   );
 }
 
@@ -330,18 +341,22 @@ export async function probeInstanceJson(
 }
 
 /** Same query without `format=json` — the instance's HTML UI (D13). */
-function htmlSearchUrl(base: string, params: SearchParams): string {
-  const qs = buildSearchParams(params);
+function htmlSearchUrl(base: string, params: SearchParams, timeoutMs: number): string {
+  const qs = buildSearchParams(params, timeoutMs);
   qs.delete('format');
   return `${base}/search?${qs.toString()}`;
 }
 
 async function fetchSearchHtml(config: Config, params: SearchParams, opts: ClientOptions) {
-  return fetchInstanceBody(config, htmlSearchUrl(config.searxngUrl, params), {
-    fetchImpl: opts.fetchImpl,
-    headers: { Accept: 'text/html' },
-    explainStatus: SEARCH_EXPLAIN,
-  });
+  return fetchInstanceBody(
+    config,
+    htmlSearchUrl(config.searxngUrl, params, config.searxngTimeoutMs),
+    {
+      fetchImpl: opts.fetchImpl,
+      headers: { Accept: 'text/html' },
+      explainStatus: SEARCH_EXPLAIN,
+    },
+  );
 }
 
 /** True only for the D13 triggers: a 403 (limiter / JSON API disabled) or a
@@ -395,10 +410,14 @@ export async function search(
     raw = await fetchSearchJson(config, effective, opts);
   } catch (error) {
     if (!htmlFallbackEligible(config, error)) throw error;
-    raw = await cached(opts.cache, 'GET', htmlSearchUrl(config.searxngUrl, effective), () =>
-      fetchSearchHtml(config, effective, opts).then((html) =>
-        parseSearchResultsHtml(html, effective.query),
-      ),
+    raw = await cached(
+      opts.cache,
+      'GET',
+      htmlSearchUrl(config.searxngUrl, effective, config.searxngTimeoutMs),
+      () =>
+        fetchSearchHtml(config, effective, opts).then((html) =>
+          parseSearchResultsHtml(html, effective.query),
+        ),
     ).catch((fallbackError: unknown) => {
       throw new SearxngError(
         `HTML fallback failed: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`,

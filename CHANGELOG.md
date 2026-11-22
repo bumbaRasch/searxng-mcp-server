@@ -47,6 +47,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Search requests send `timeout_limit`** — every SearXNG search request
+  (`search`, the category tools, `search_and_fetch`, `deep_search`, `doctor`)
+  now sends 80% of `SEARXNG_TIMEOUT_MS` (in seconds, floor 1 s) as SearXNG's
+  `timeout_limit`. Slow engines are cut off and the response carries the
+  results that arrived, instead of the client aborting at 10 s with nothing.
+  To wait longer for slow engines, raise `SEARXNG_TIMEOUT_MS`.
 - **`rerank: true` ranks the full page** — `search`, `search_and_fetch`,
   `deep_search` (and batch `queries`) now rerank the whole result page before
   the `max_results` cut, so better-matching results further down the page can

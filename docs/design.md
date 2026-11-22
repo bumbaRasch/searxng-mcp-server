@@ -18,10 +18,10 @@ tools:
 - `music_search` — find music, including direct audio file links when available.
 - `paper_search` — find scientific publications: abstracts, authors,
   journal/DOI metadata and direct PDF links.
-- `fetch_content` — fetch a URL or a citation ref (`ref:N`) and return clean
 - `code_search` — code repositories, packages and container images, developer
   docs and programming Q&A (SearXNG `it` and `q&a` categories), always reranked
   by query relevance before the `max_results` slice.
+- `fetch_content` — fetch a URL or a citation ref (`ref:N`) and return clean
   Markdown for LLM consumption, with `outline`/`section` reading controls
   (D14), offset continuation for long pages, and an opt-in Wayback fallback
   for dead links.
@@ -244,6 +244,12 @@ Hard-to-discover facts encoded in `src/searxng.ts` (verified against
   on it — re-verify on each image bump; `categories` are validated server-side
   (unknown values dropped); `time_range` is validated in `parse_time_range`.
 - `max_results` has no server-side parameter — the client slices the page.
+- `timeout_limit` (seconds, float) caps how long SearXNG waits for engines; it is
+  min'd with the per-engine timeouts and `outgoing.max_request_timeout`, so it
+  can only shorten the wait. A non-numeric value gives 400. Every search request
+  sends 80% of `SEARXNG_TIMEOUT_MS` in seconds (floor 1 s, so 8 s by default),
+  so SearXNG answers with the results that arrived and slow engines appear in
+  `unresponsiveEngines`.
 - `/autocompleter` is GET-only and reads just `q`; with the
   `X-Requested-With: XMLHttpRequest` header it returns a flat JSON array of
   strings, without it an OpenSearch-shaped `[prefix, [results], …]` payload
