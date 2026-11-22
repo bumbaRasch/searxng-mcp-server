@@ -49,6 +49,28 @@ describe('deepSearch', () => {
     expect(dossier.synthesisNote).toMatch(/No synthesis endpoint configured/);
   });
 
+  it('iterates over the reranked whole-page top results', async () => {
+    const fetchImpl = asFetchLike(async (url: string) =>
+      url.includes('/search?')
+        ? jsonResponse({
+            query: 'rust async',
+            results: [
+              { title: 'noise', url: 'https://r.test/1', content: '' },
+              { title: 'rust async guide', url: 'https://r.test/2', content: '' },
+            ],
+          })
+        : new Response(HTML_PAGE, { status: 200, headers: { 'content-type': 'text/html' } }),
+    );
+    const dossier = await deepSearch(config, 'rust async', {
+      maxIterations: 1,
+      sourcesPerIteration: 1,
+      maxResults: 1,
+      refs: new RefRegistry(),
+      fetchImpl,
+    });
+    expect(dossier.sources.map((s) => s.url)).toEqual(['https://r.test/2']);
+  });
+
   it('synthesizes over the configured endpoint', async () => {
     const synthesisConfig = makeConfig({
       synthesisUrl: 'https://synth.test/v1/chat/completions',
