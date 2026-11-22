@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-22
+
 ### Added
 
 - **`code_search` tool** — searches SearXNG's `it` and `q&a` categories: code repositories, packages and container images (GitHub, PyPI, Docker Hub), developer docs (MDN, man pages, Arch/Gentoo wikis) and programming Q&A (Stack Overflow, Ask Ubuntu, Super User). Package results carry `packageName`, `version`, `maintainer`, `license`, `tags` and links. Results are always reranked by query relevance over the whole page before `max_results` is applied; no `time_range` filter. The category registry gains an optional `rank` hook for this. Tool count grows from thirteen to fourteen.
@@ -382,7 +384,8 @@ No 0.3.x compatibility shims (pre-1.0 minor, per the release policy):
 - Bundled SearXNG Docker stack (pinned image, loopback-only) and end-to-end verification script.
 - 260 unit tests, CI matrix (Node 22.19/24/26), type-aware linting, coverage.
 
-[Unreleased]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v0.5.2...v1.0.1
 [0.5.2]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/bumbaRasch/searxng-mcp-server/compare/v0.5.0...v0.5.1
