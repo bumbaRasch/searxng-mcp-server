@@ -191,8 +191,9 @@ describe('paper schemas', () => {
 });
 
 describe('TOOL_NAMES parity', () => {
-  it('expects 13 tools including paper_search', () => {
-    expect(TOOL_NAMES).toHaveLength(13);
+  it('expects 14 tools including paper_search and code_search', () => {
+    expect(TOOL_NAMES).toHaveLength(14);
+    expect(TOOL_NAMES).toContain('code_search');
     expect(TOOL_NAMES).toContain('paper_search');
   });
 });

@@ -488,7 +488,8 @@ export function registerTools(server: McpServer, config: Config, deps: ToolDeps 
         icons: TOOL_ICONS,
         ...appMeta,
       },
-      (args, ctx) =>
+      // Annotated: with timed and untimed categories the schema is a union the SDK can't infer.
+      (args: CategoryToolInput, ctx: { mcpReq?: { envelope?: unknown } } | undefined) =>
         runWithTraceContext(ctx?.mcpReq?.envelope, async () =>
           handler(config, args, effectiveDeps),
         ),

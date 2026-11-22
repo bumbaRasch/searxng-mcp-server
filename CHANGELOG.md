@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`code_search` tool** — searches SearXNG's `it` and `q&a` categories: code repositories, packages and container images (GitHub, PyPI, Docker Hub), developer docs (MDN, man pages, Arch/Gentoo wikis) and programming Q&A (Stack Overflow, Ask Ubuntu, Super User). Package results carry `packageName`, `version`, `maintainer`, `license`, `tags` and links. Results are always reranked by query relevance over the whole page before `max_results` is applied; no `time_range` filter. The category registry gains an optional `rank` hook for this. Tool count grows from thirteen to fourteen.
 - **Extension advertisement** — the server declares its three 2026-07-28
   extensions in `capabilities.extensions` (`src/server.ts`):
   `io.modelcontextprotocol/tasks`, `io.modelcontextprotocol/skills` and

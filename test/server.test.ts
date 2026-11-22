@@ -226,6 +226,7 @@ describe('every tool answers over transport', () => {
     music_search: { query: 'q' },
     autocomplete: { query: 'q' },
     paper_search: { query: 'q' },
+    code_search: { query: 'q' },
     list_engines: {},
     doctor: {},
     crawl_site: { url: 'https://example.test/doc', max_pages: 1 },

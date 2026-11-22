@@ -14,6 +14,10 @@ and registration from it.
      derives the tool's output schema from it (the
      query/results/suggestions/unresponsiveEngines envelope over
      `resultSchema`).
+   - `rank` (optional): `rank(query, results, { boostDomains }) → results`.
+     Set it only when upstream ordering is poor for the category; reuse
+     `rerankResults` from `src/rerank.ts`. Ranking runs over the whole projected
+     page before the `max_results` slice.
    - `projectResult`: defensive `raw → Result | undefined` projection —
      return `undefined` to drop a garbage item without consuming the
      `max_results` budget; reuse the shared bounds and helpers
