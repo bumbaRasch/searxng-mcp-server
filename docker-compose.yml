@@ -2,7 +2,7 @@ name: searxng
 services:
   searxng:
     # Pinned tag: JSON API behavior verified against this build.
-    image: docker.io/searxng/searxng:2026.10.19-81371861f
+    image: docker.io/searxng/searxng:2026.11.21-c6ee3e9fd
     restart: unless-stopped
     # Loopback-only: the MCP server runs on the same host. The JSON API is
     # unauthenticated; do NOT bind this port to a public interface.
@@ -10,5 +10,6 @@ services:
       - '127.0.0.1:8888:8080'
     environment:
       - SEARXNG_SECRET=${SEARXNG_SECRET:?set SEARXNG_SECRET in .env (openssl rand -hex 32)}
+      - 'SEARXNG_CONTACT_URL=${SEARXNG_CONTACT_URL:?set SEARXNG_CONTACT_URL in .env (mailto: or web contact, required by Wikimedia engines)}'
     volumes:
       - ./searxng:/etc/searxng/:Z

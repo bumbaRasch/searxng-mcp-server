@@ -228,7 +228,9 @@ Hard-to-discover facts encoded in `src/searxng.ts` (verified against
 - `unresponsive_engines[]` are **`[engine, message]` pairs**, not names (projected as
   fixed-length `string[2]`, not `z.tuple`, so draft-07-only clients can validate it).
 - `engines` (comma-separated) **is** parsed from the query string even though
-  it is absent from the public API docs; `categories` are validated server-side
+  it is absent from the public API docs (removed there as "no longer supported"
+  in upstream #6346, 2026-07; still works). The `engines` tool argument depends
+  on it — re-verify on each image bump; `categories` are validated server-side
   (unknown values dropped); `time_range` is validated in `parse_time_range`.
 - `max_results` has no server-side parameter — the client slices the page.
 - `/autocompleter` is GET-only and reads just `q`; with the
@@ -242,7 +244,9 @@ Engine-specific credentials (e.g. the OpenAlex `api_key`, which replaced the
 deprecated `mailto` polite pool in February 2026 — see
 [searxng#6513](https://github.com/searxng/searxng/issues/6513)) are configured
 in `searxng/settings.yml`, never in this server. The MCP server itself needs
-no API keys.
+no API keys. Since upstream #6870 the instance also needs `general.contact_url`
+(`SEARXNG_CONTACT_URL`), else Wikipedia/Wikidata/OSM disable themselves and
+`search` loses infoboxes.
 
 ## Security model
 

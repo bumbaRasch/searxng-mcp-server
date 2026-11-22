@@ -38,11 +38,12 @@ Requires Node >= 22.19 (the `npx` runtime) and Docker for the SearXNG stack.
 
 ```bash
 printf 'SEARXNG_SECRET=%s\n' "$(openssl rand -hex 32)" > .env
+printf 'SEARXNG_CONTACT_URL=%s\n' 'mailto:you@example.org' >> .env
 docker compose up -d
 curl -fsS 'http://localhost:8888/search?q=test&format=json' | head -c 80
 ```
 
-The bundled `docker-compose.yml` enables the JSON API and binds `127.0.0.1` only — the API is unauthenticated, so never expose the port publicly. Engine credentials (e.g. an OpenAlex `api_key`) belong in `searxng/settings.yml`.
+`SEARXNG_CONTACT_URL` is the operator contact SearXNG now requires for the Wikimedia engines (Wikipedia, Wikidata, OpenStreetMap); set it to a `mailto:` address or a contact page of yours. The bundled `docker-compose.yml` enables the JSON API and binds `127.0.0.1` only — the API is unauthenticated, so never expose the port publicly. Engine credentials (e.g. an OpenAlex `api_key`) belong in `searxng/settings.yml`.
 
 ### 2. Add to any MCP client
 
@@ -216,6 +217,7 @@ A `--transport stdio|http` CLI flag overrides `SEARXNG_TRANSPORT`; an invalid fl
 ## Troubleshooting
 
 - `SearXNG returned 403: the JSON API is disabled` — add `json` to `search.formats` in `searxng/settings.yml` and restart the stack, or set `SEARXNG_HTML_FALLBACK=true` to parse the HTML UI instead.
+- Compose fails with `set SEARXNG_CONTACT_URL`, or no Wikipedia results or infoboxes — add `SEARXNG_CONTACT_URL=mailto:you@example.org` (your own address) to `.env` and recreate the container (`docker compose up -d`).
 - `Could not reach SearXNG` — the Docker stack is not running, or `SEARXNG_URL` is wrong in the client's `env` block.
 - `npx` fails to start the server — Node 22.19+ is required; check `node -v`.
 - Port 8888 already bound — change the compose port mapping and `SEARXNG_URL` to match.
